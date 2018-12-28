@@ -1,2 +1,2 @@
 from .baseline import *
-from .emnist import *
+from .mnist import *

@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import config
 import numbers
 import numpy as np
@@ -15,9 +16,9 @@ def PSNR(output,target,max=1.0):
     psnr = (20*torch.log10(MAX)-10*torch.log10(MSE)).item()
     return psnr
     
-def BPP(code,input_img):
+def BPP(code,img):
     nbytes = code.numpy().nbytes
-    num_pixel = input_img.numel()/input_img.size(1)
+    num_pixel = img.numel()/img.size(1)
     bpp = 8*nbytes/num_pixel
     return bpp
 
@@ -45,13 +46,13 @@ def cluster_ACC(output,target,topk=1):
         batch_size = target.size(0)
         pred_k = output.topk(topk, 1, True, True)[1]
         D = max(pred_k.max(), target.max()) + 1
-        w = torch.zeros(D,D)	
+        w = torch.zeros(D,D)    
         for i in range(batch_size):
             w[pred_k[i], target[i]] += 1
         ind = linear_assignment(w.max() - w)
         correct_k = sum([w[i,j] for i,j in ind])
         cluster_acc = (correct_k*(100.0 / batch_size)).item()
-	return cluster_acc
+    return cluster_acc
     
 def F1(output,target,topk=1):  
     with torch.no_grad():
@@ -191,9 +192,9 @@ class Metric(object):
         evaluation['loss'] = output['loss'].item()
         if(tuning_param['compression'] > 0):
             if('psnr' in metric_names):
-                evaluation['psnr'] = PSNR(output['compression'],input['img'])
+                evaluation['psnr'] = PSNR(output['compression']['img'],input['img'])
             if('bpp' in metric_names):
-                evaluation['bpp'] = PSNR(output['code'],input['img'])
+                evaluation['bpp'] = BPP(output['compression']['code'],input['img'])
         if(tuning_param['classification'] > 0):
             topk=protocol['topk']
             if(self.if_save):

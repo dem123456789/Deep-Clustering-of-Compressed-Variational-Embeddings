@@ -94,7 +94,7 @@ def train(train_loader,model,optimizer,epoch,protocol):
         if i % (len(train_loader)//5) == 0:
             estimated_finish_time = str(datetime.timedelta(seconds=(len(train_loader)-i-1)*batch_time))
             print('Train Epoch: {}[({:.0f}%)]{}, Estimated Finish Time: {}'.format(
-                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','acc','batch_time']), estimated_finish_time))
+                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','psnr','acc','batch_time']), estimated_finish_time))
     return meter_panel
 
 def test(validation_loader,model,epoch,protocol,model_TAG):
@@ -114,7 +114,7 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
         save_img(input['img'],'./output/img/image.png')
-        save_img(output['compression'],'./output/img/image_{}_{}.png'.format(model_TAG,epoch))
+        save_img(output['compression']['img'],'./output/img/image_{}_{}.png'.format(model_TAG,epoch))
     return meter_panel
 
 def init_train_protocol(dataset):
@@ -155,7 +155,7 @@ def collate(input):
   
 def print_result(epoch,train_meter_panel,test_meter_panel):
     estimated_finish_time = str(datetime.timedelta(seconds=(max_num_epochs - epoch - 1)*train_meter_panel.panel['batch_time'].sum))
-    print('Test Epoch: {}{}{}, Estimated Finish Time: {}'.format(epoch,test_meter_panel.summary(['loss','acc']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
+    print('Test Epoch: {}{}{}, Estimated Finish Time: {}'.format(epoch,test_meter_panel.summary(['loss','psnr','acc']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
     return
 
 def resume(model,optimizer,scheduler,resume_model_TAG):

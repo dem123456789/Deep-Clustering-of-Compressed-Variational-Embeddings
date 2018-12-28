@@ -7,7 +7,7 @@ class Quantize(Function):
         super(Quantize, self).__init__()   
         
     @staticmethod
-    def forward(ctx, input, inplace):
+    def forward(ctx, input, inplace=False):
         if(inplace):
             output = input.round_()
         else:

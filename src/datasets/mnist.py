@@ -23,21 +23,19 @@ class MNIST(Dataset):
     def __init__(self, root, train=True, transform=None, download=False):
         self.root = os.path.expanduser(root)
         self.transform = transform
-        self.train = train
-        
+        self.train = train        
         if download:
             self.download()
-
         if not self._check_exists():
             raise RuntimeError('Dataset not found.' +
                                ' You can use download=True to download it')
-
         if self.train:
             data_file = self.training_file
         else:
             data_file = self.test_file
         self.img, self.label = torch.load(os.path.join(self.processed_folder, data_file))
         self.classes_size = 10
+        self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
         
     def __getitem__(self, index):
         img, label = self.img[index], torch.tensor(self.label[index])
@@ -46,7 +44,7 @@ class MNIST(Dataset):
         if self.transform is not None:
             input = self.transform(input)            
         return input
-
+        
     def __len__(self):
         return len(self.img)
 
@@ -57,10 +55,6 @@ class MNIST(Dataset):
     @property
     def processed_folder(self):
         return os.path.join(self.root, 'processed')
-
-    @property
-    def class_to_idx(self):
-        return {_class: i for i, _class in enumerate(self.classes)}
 
     def _check_exists(self):
         return os.path.exists(os.path.join(self.processed_folder, self.training_file)) and \
@@ -78,18 +72,14 @@ class MNIST(Dataset):
     def download(self):
         if self._check_exists():
             return
-
         makedir_exist_ok(self.raw_folder)
         makedir_exist_ok(self.processed_folder)
-
         for url in self.urls:
             filename = url.rpartition('/')[2]
             file_path = os.path.join(self.raw_folder, filename)
             download_url(url, root=self.raw_folder, filename=filename, md5=None)
             self.extract_gzip(gzip_path=file_path, remove_finished=True)
-
         print('Processing...')
-
         training_set = (
             read_image_file(os.path.join(self.raw_folder, 'train-images-idx3-ubyte')),
             read_label_file(os.path.join(self.raw_folder, 'train-labels-idx1-ubyte'))
@@ -102,7 +92,6 @@ class MNIST(Dataset):
             torch.save(training_set, f)
         with open(os.path.join(self.processed_folder, self.test_file), 'wb') as f:
             torch.save(test_set, f)
-
         print('Done!')
 
     def __repr__(self):
