@@ -113,6 +113,9 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
             meter_panel.update(evaluation,batch_size)
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
+        print(torch.nn.functional.log_softmax(model.classifier.classifier_prior['y']))
+        print(model.codec.codec_prior['mu'])
+        print(model.codec.codec_prior['var'])
         save_img(input['img'],'./output/img/image.png')
         save_img(output['compression']['img'],'./output/img/image_{}_{}.png'.format(model_TAG,epoch))
     return meter_panel

@@ -10,7 +10,7 @@ def init():
         'model_name': 'Joint',
         'resume_TAG': '',
         'special_TAG': '',
-        'lr': 1e-3,
+        'lr': 1e-4,
         'milestones': [150,250],
         'gamma': 0.1,
         'branch': False,

@@ -68,11 +68,9 @@ class Encoder(nn.Module):
         return encoder
         
     def forward(self, input, protocol):
-        mode = protocol['mode']
-        depth = protocol['depth']
-        x = L_to_RGB(input) if (mode == 'L') else input
+        x = L_to_RGB(input) if (protocol['mode'] == 'L') else input
         x = torch.tanh(self.conv0(x))
-        for i in range(depth):
+        for i in range(protocol['depth']):
             x = self.encoder[i](x, protocol)
         return x
                
@@ -133,107 +131,146 @@ class Decoder(nn.Module):
         return decoder
         
     def forward(self, input, protocol):
-        mode = protocol['mode']
-        depth = protocol['depth']
         x = torch.tanh(self.conv0(input))
-        for i in range(depth):
+        for i in range(protocol['depth']):
             x = self.decoder[i](x, protocol)
         x = torch.tanh(self.conv1(x))
-        x = RGB_to_L(x) if (mode == 'L') else x
+        x = RGB_to_L(x) if (protocol['mode'] == 'L') else x
         return x
 
 class Codec(nn.Module):
-    def __init__(self):
+    def __init__(self,classes_size):
         super(Codec, self).__init__()
+        self.classes_size = classes_size
+        self.codec_prior_info = self.make_codec_prior_info()
         self.encoder = Encoder()
         self.embedding = NormalEmbedding()
+        self.codec_prior = self.make_codec_prior()
         self.decoder = Decoder()
+    
+    def make_codec_prior_info(self):
+        codec_prior_info = {'input_size':code_size*4*4,'output_size':self.classes_size}
+        return codec_prior_info
+    
+    def make_codec_prior(self):
+        codec_prior = nn.ParameterDict([])
+        codec_prior['mu'] = nn.Parameter(torch.zeros(self.codec_prior_info['input_size'], self.codec_prior_info['output_size']))
+        codec_prior['var'] = nn.Parameter(torch.ones(self.codec_prior_info['input_size'], self.codec_prior_info['output_size']))
+        return codec_prior
         
     def compression_loss_fn(self, input, output, protocol):
-        loss = F.binary_cross_entropy(output['compression']['img'],input['img'])
+        loss = 0
+        if(protocol['tuning_param']['compression'] > 0):
+            loss = loss + F.binary_cross_entropy(output['compression']['img'],input['img'],reduction='none').view(input['img'].size(0),-1).sum(dim=1,keepdim=True)
+        q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
+        q_var = output['compression']['param']['var'].view(input['img'].size(0),-1,1)
+        KLD_mvn = 0.5*(torch.sum((q_var/self.codec_prior['var'] + (self.codec_prior['mu']-q_mu)**2/self.codec_prior['var'] - 1),dim=1) + torch.log(self.codec_prior['var'].prod(dim=0)/q_var.prod(dim=1)))
+        if(protocol['tuning_param']['classification'] > 0):
+            log_q_c_z = F.log_softmax(output['classification'],dim=1)
+            loss = loss + KLD_mvn*log_q_c_z.exp()
+        else:
+            loss = loss + KLD_mvn
+        loss = loss.sum()/input['img'].numel()
         return loss
+
+class ClassifierCell(nn.Module):
+    def __init__(self, classifier_cell_info):
+        super(ClassifierCell, self).__init__()
+        self.classifier_cell_info = classifier_cell_info
+        self.classifier_cell = self.make_classifier_cell()
+        
+    def make_classifier_cell(self):
+        classifier_cell = nn.ModuleList([])
+        for i in range(len(self.classifier_cell_info)):
+            classifier_cell.append(Cell(self.classifier_cell_info[i]))
+        return classifier_cell
+        
+    def forward(self, input, protocol):
+        x = input
+        for i in range(len(self.classifier_cell)-1):          
+            x = torch.tanh(self.classifier_cell[i](x,protocol))
+        x = F.adaptive_avg_pool2d(x, 1)
+        x = self.classifier_cell[-1](x,protocol)
+        x = x.view(x.size(0),x.size(1))
+        return x
         
 class Classifier(nn.Module):
     def __init__(self, classes_size):
         super(Classifier, self).__init__()
         self.classes_size = classes_size
         self.classifier_info = self.make_classifier_info()
-        self.classifier = self.make_classifier(self.classifier_info)
+        self.classifier = self.make_classifier()
+        self.classifier_prior_info = self.make_classifier_prior_info()
+        self.classifier_prior = self.make_classifier_prior()
         
     def make_classifier_info(self):
-        classifier_info = {'input_size':code_size*4*4,'output_size':self.classes_size}
+        classifier_info = [
+                        {'input_size':code_size,'output_size':512,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False},
+                        {'input_size':512,'output_size':512,'kernel_size':3,'stride':1,'padding':1,'dilation':1,'bias':False},
+                        {'input_size':512,'output_size':self.classes_size,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False}
+                        ]
         return classifier_info
         
-    def make_classifier(self, classifier_info):
-        classifier = nn.ParameterDict([])       
-        classifier['y'] = nn.Parameter(torch.ones(classifier_info['output_size'])/classifier_info['output_size'])
-        classifier['mu'] = nn.Parameter(torch.zeros(classifier_info['input_size'], classifier_info['output_size']).normal_())
-        classifier['var'] = nn.Parameter(torch.ones(classifier_info['input_size'], classifier_info['output_size']))
+    def make_classifier(self):
+        classifier = ClassifierCell(self.classifier_info)
         return classifier
-       
+
+    def make_classifier_prior_info(self):
+        classifier_prior_info = {'output_size':self.classes_size}
+        return classifier_prior_info
+        
+    def make_classifier_prior(self):
+        classifier_prior = nn.ParameterDict([])
+        classifier_prior['y'] = nn.Parameter(torch.ones(self.classifier_prior_info['output_size']))
+        return classifier_prior
+
     def classification_loss_fn(self, input, output, protocol):
-        z = output['compression']['code'].view(output['compression']['code'].size(0),-1,1)
-        q_mu = output['compression']['param']['mu'].view(z.size(0),-1,1)
-        q_var = output['compression']['param']['var'].view(z.size(0),-1,1)
-        q_z_x = 1/torch.sqrt(2*math.pi*q_var)*torch.exp((z-q_mu)**2/(2*q_var))
-        log_q_c_z = output['classification']
-        KLD_mvn = 0.5*(torch.sum((q_var/self.classifier['var'] + (self.classifier['mu']-q_mu)**2/self.classifier['var'] - 1),dim=1) + torch.log(self.classifier['var'].prod(dim=0)/q_var.prod(dim=1)))
-        KLD_categorical = log_q_c_z.exp()*(log_q_c_z-F.log_softmax(self.classifier['y'],dim=0)) 
-        #loss = ((KLD_mvn*log_q_c_z.exp()).sum() + (KLD_categorical*q_z_x.prod(dim=1)).sum())/(input['img'].numel())
-        loss = ((KLD_mvn*log_q_c_z.exp()).sum() + (KLD_categorical*q_z_x.prod(dim=1)).sum())/(input['img'].numel())
-        if(torch.isnan(log_q_c_z).any()):
-            print(output['compression']['code'][0,0])
-            print(output['compression']['param']['mu'])
-            print(output['compression']['param']['var'])
-            print(self.classifier['mu'])
-            print(self.classifier['var'])    
-            print(KLD_mvn.sum())
-            print(KLD_categorical.sum())
-            print(loss)
-            exit()  
+        loss = 0
+        if(protocol['tuning_param']['classification'] > 0):
+            z = output['compression']['code'].view(input['img'].size(0),-1,1)
+            q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
+            q_var = output['compression']['param']['var'].view(input['img'].size(0),-1,1)
+            q_z_x = 1/torch.sqrt(2*math.pi*q_var)*torch.exp((z-q_mu)**2/(2*q_var)) 
+            log_q_c_z = F.log_softmax(output['classification'],dim=1)
+            loss = loss +log_q_c_z.exp()*(log_q_c_z-F.log_softmax(self.classifier_prior['y'],dim=0))*q_z_x.prod(dim=1)
+            loss = loss.sum()/input['img'].numel()
         return loss
         
     def forward(self, input, protocol):
-        x = input.view(input.size(0),-1,1)
-        log_q_c_z = F.log_softmax(self.classifier['y'],dim=0) - torch.sum(0.5*torch.log(2*math.pi*self.classifier['var']) + (x-self.classifier['mu'])**2/(2*self.classifier['var']),dim=1)
-        normalization_factor = torch.log(torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0]).sum(dim=1,keepdim=True)) + log_q_c_z.max(dim=1,keepdim=True)[0]
-        log_q_c_z = log_q_c_z - normalization_factor
-        #q_c_z = torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0])/torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0]).sum(dim=1,keepdim=True)    
-        return log_q_c_z
-        
+        x = self.classifier(input,protocol)
+        return x
+
 class Joint(nn.Module):
     def __init__(self,classes_size):
         super(Joint, self).__init__()
         self.classes_size = classes_size
-        self.codec = Codec()
+        self.codec = Codec(classes_size)
         self.classifier = Classifier(classes_size)
 
     def loss_fn(self, input, output, protocol):
-        tuning_param = protocol['tuning_param']
-        loss = tuning_param['compression']*self.codec.compression_loss_fn(input,output,protocol) +\
-                tuning_param['classification']*self.classifier.classification_loss_fn(input,output,protocol)
+        compression_loss = self.codec.compression_loss_fn(input,output,protocol)
+        classification_loss = self.classifier.classification_loss_fn(input,output,protocol)
+        loss = protocol['tuning_param']['compression']*compression_loss + protocol['tuning_param']['classification']*classification_loss
         return loss
 
     def forward(self, input, protocol):
-        tuning_param = protocol['tuning_param']
-        loss = 0
         output = {}
         
         img = (input['img'] - 0.5) * 2
         encoded = self.codec.encoder(img,protocol)
         code, param = self.codec.embedding(encoded,protocol)
-        compression_output = self.codec.decoder(code,protocol)
-        compression_output = (compression_output + 1) * 0.5
-        output['compression'] = {'code':code, 'param':param, 'img':compression_output}
-        compression_loss = tuning_param['compression']*self.codec.compression_loss_fn(input,output,protocol)
-        loss = loss + compression_loss
+        output['compression'] = {'code':code, 'param':param}
         
-        if(tuning_param['classification'] > 0):
+        if(protocol['tuning_param']['compression'] > 0):
+            compression_output = self.codec.decoder(code,protocol)
+            compression_output = (compression_output + 1) * 0.5
+            output['compression']['img'] = compression_output
+       
+        if(protocol['tuning_param']['classification'] > 0):
             classification_output = self.classifier(code,protocol)
             output['classification'] = classification_output
-            classification_loss = tuning_param['classification']*self.classifier.classification_loss_fn(input,output,protocol)
-            loss = loss + classification_loss
-        output['loss'] = loss
+            
+        output['loss'] = self.loss_fn(input,output,protocol)
         return output
         
         

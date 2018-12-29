@@ -130,7 +130,7 @@ class Meter_Panel(object):
         if('acc' in names and 'acc' in self.panel):
             fmt_str += '\tACC: {:.4f}'.format(self.panel['acc'].avg)
         if('cluster_acc' in names and 'cluster_acc' in self.panel):
-            fmt_str += '\tACC: {:.4f}'.format(self.panel['cluster_acc'].avg)
+            fmt_str += '\tACC: {:.4f}'.format(self.panel['cluster_acc'].val)
         if('batch_time' in names and 'batch_time' in self.panel):
             fmt_str += '\tBatch Time: {:.4f}'.format(self.panel['batch_time'].sum)
         return fmt_str
