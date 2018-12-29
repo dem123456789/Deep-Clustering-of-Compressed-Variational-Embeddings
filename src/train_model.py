@@ -40,8 +40,8 @@ def runExperiment(seed):
     print('Training data size {}, Number of Batches {}, Test data size {}'.format(valid_data_size,len(train_loader),len(test_dataset)))
     last_epoch = 0
     model = eval('models.{}.{}(classes_size=train_dataset.classes_size).to(device)'.format(model_dir,model_name)) 
-    #optimizer = optim.Adam(model.parameters(),lr=lr, weight_decay=5e-4)
-    optimizer = optim.SGD(model.parameters(),lr=lr, momentum=0.9, weight_decay=5e-4)
+    optimizer = optim.Adam(model.parameters(),lr=lr, weight_decay=5e-4)
+    #optimizer = optim.SGD(model.parameters(),lr=lr, momentum=0.9, weight_decay=5e-4)
     scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
     if(resume_mode == 2):
         _,model,_,_ = resume(model,optimizer,scheduler,resume_model_TAG)       
@@ -94,7 +94,7 @@ def train(train_loader,model,optimizer,epoch,protocol):
         if i % (len(train_loader)//5) == 0:
             estimated_finish_time = str(datetime.timedelta(seconds=(len(train_loader)-i-1)*batch_time))
             print('Train Epoch: {}[({:.0f}%)]{}, Estimated Finish Time: {}'.format(
-                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','psnr','acc','batch_time']), estimated_finish_time))
+                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','psnr','cluster_acc','batch_time']), estimated_finish_time))
     return meter_panel
 
 def test(validation_loader,model,epoch,protocol,model_TAG):
@@ -120,7 +120,7 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
 def init_train_protocol(dataset):
     protocol = {}
     protocol['tuning_param'] = config.PARAM['tuning_param']
-    protocol['metric_names'] = config.PARAM['metric_names']
+    protocol['metric_names'] = config.PARAM['metric_names'][:-1]
     protocol['topk'] = config.PARAM['topk']
     protocol['balance'] = config.PARAM['balance']
     if(protocol['balance']):
@@ -155,7 +155,7 @@ def collate(input):
   
 def print_result(epoch,train_meter_panel,test_meter_panel):
     estimated_finish_time = str(datetime.timedelta(seconds=(max_num_epochs - epoch - 1)*train_meter_panel.panel['batch_time'].sum))
-    print('Test Epoch: {}{}{}, Estimated Finish Time: {}'.format(epoch,test_meter_panel.summary(['loss','psnr','acc']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
+    print('Test Epoch: {}{}{}, Estimated Finish Time: {}'.format(epoch,test_meter_panel.summary(['loss','psnr','cluster_acc']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
     return
 
 def resume(model,optimizer,scheduler,resume_model_TAG):

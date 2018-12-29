@@ -11,7 +11,7 @@ from utils import RGB_to_L, L_to_RGB
 
 config.init()
 device = config.PARAM['device']
-code_size = 32
+code_size = 1
 
 class Cell(nn.Module):
     def __init__(self, cell_info):
@@ -161,32 +161,45 @@ class Classifier(nn.Module):
         self.classifier = self.make_classifier(self.classifier_info)
         
     def make_classifier_info(self):
-        classifier_info = {'input_size':code_size,'output_size':self.classes_size}
+        classifier_info = {'input_size':code_size*4*4,'output_size':self.classes_size}
         return classifier_info
         
     def make_classifier(self, classifier_info):
-        classifier = nn.ParameterDict([])
-        classifier['pi'] = nn.Parameter(torch.ones(classifier_info['output_size'])/classifier_info['output_size'])
-        classifier['mu'] = nn.Parameter(torch.zeros(classifier_info['input_size'], classifier_info['output_size']))
-        classifier['var'] = nn.Parameter(torch.zeros(classifier_info['input_size'], classifier_info['output_size']))
+        classifier = nn.ParameterDict([])       
+        classifier['y'] = nn.Parameter(torch.ones(classifier_info['output_size'])/classifier_info['output_size'])
+        classifier['mu'] = nn.Parameter(torch.zeros(classifier_info['input_size'], classifier_info['output_size']).normal_())
+        classifier['var'] = nn.Parameter(torch.ones(classifier_info['input_size'], classifier_info['output_size']))
         return classifier
        
     def classification_loss_fn(self, input, output, protocol):
-        z = F.adaptive_avg_pool2d(output['compression']['code'], 1).view(x.size(0),-1,1)
-        q_mu = F.adaptive_avg_pool2d(output['compression']['param']['mu'], 1).view(z.size(0),-1,1)
-        q_var = F.adaptive_avg_pool2d(output['compression']['param']['var'], 1).view(z.size(0),-1,1)
+        z = output['compression']['code'].view(output['compression']['code'].size(0),-1,1)
+        q_mu = output['compression']['param']['mu'].view(z.size(0),-1,1)
+        q_var = output['compression']['param']['var'].view(z.size(0),-1,1)
         q_z_x = 1/torch.sqrt(2*math.pi*q_var)*torch.exp((z-q_mu)**2/(2*q_var))
-        q_c_z = output['classification']
-        KLD_mvn = 0.5*(q_var/self.classifier['var'] + (self.classifier['mu']-q_mu)**2/self.classifier['var'] - 1 + torch.log(self.classifier['var'].prod()/q_var.prod()))
-        KLD_categorical = q_c_z*torch.log(q_c_z/self.classifier['pi'])
-        loss = ((KLD_mvn*q_c_z).sum() + (KLD_categorical*q_z_x).sum())/z.size(0)
+        log_q_c_z = output['classification']
+        KLD_mvn = 0.5*(torch.sum((q_var/self.classifier['var'] + (self.classifier['mu']-q_mu)**2/self.classifier['var'] - 1),dim=1) + torch.log(self.classifier['var'].prod(dim=0)/q_var.prod(dim=1)))
+        KLD_categorical = log_q_c_z.exp()*(log_q_c_z-F.log_softmax(self.classifier['y'],dim=0)) 
+        #loss = ((KLD_mvn*log_q_c_z.exp()).sum() + (KLD_categorical*q_z_x.prod(dim=1)).sum())/(input['img'].numel())
+        loss = ((KLD_mvn*log_q_c_z.exp()).sum() + (KLD_categorical*q_z_x.prod(dim=1)).sum())/(input['img'].numel())
+        if(torch.isnan(log_q_c_z).any()):
+            print(output['compression']['code'][0,0])
+            print(output['compression']['param']['mu'])
+            print(output['compression']['param']['var'])
+            print(self.classifier['mu'])
+            print(self.classifier['var'])    
+            print(KLD_mvn.sum())
+            print(KLD_categorical.sum())
+            print(loss)
+            exit()  
         return loss
         
     def forward(self, input, protocol):
-        x = F.adaptive_avg_pool2d(input, 1).view(x.size(0),-1,1)
-        log_q_c_z = torch.log(self.classifier['pi']) - torch.sum(0.5*torch.log(2*math.pi*self.classifier['var']) + (x-self.classifier['mu'])**2/(2*self.classifier['var']),dim=1)
-        q_c_z = torch.exp(log_q_c_z-log_q_c_z.max())/torch.exp((log_q_c_z-log_q_c_z.max()).sum(dim=1,keepdim=True))
-        return q_c_z
+        x = input.view(input.size(0),-1,1)
+        log_q_c_z = F.log_softmax(self.classifier['y'],dim=0) - torch.sum(0.5*torch.log(2*math.pi*self.classifier['var']) + (x-self.classifier['mu'])**2/(2*self.classifier['var']),dim=1)
+        normalization_factor = torch.log(torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0]).sum(dim=1,keepdim=True)) + log_q_c_z.max(dim=1,keepdim=True)[0]
+        log_q_c_z = log_q_c_z - normalization_factor
+        #q_c_z = torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0])/torch.exp(log_q_c_z-log_q_c_z.max(dim=1,keepdim=True)[0]).sum(dim=1,keepdim=True)    
+        return log_q_c_z
         
 class Joint(nn.Module):
     def __init__(self,classes_size):

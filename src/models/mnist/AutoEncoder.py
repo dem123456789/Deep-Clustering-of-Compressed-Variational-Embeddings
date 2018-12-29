@@ -11,7 +11,7 @@ from utils import RGB_to_L, L_to_RGB
 
 config.init()
 device = config.PARAM['device']
-code_size = 32
+code_size = 1
 
 class Cell(nn.Module):
     def __init__(self, cell_info):
