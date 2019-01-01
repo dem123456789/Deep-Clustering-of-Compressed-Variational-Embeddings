@@ -11,7 +11,7 @@ from utils import RGB_to_L, L_to_RGB,dict_to_device
 
 config.init()
 device = config.PARAM['device']
-code_size = 1
+code_size = 4
 
 class Cell(nn.Module):
     def __init__(self, cell_info):
@@ -185,6 +185,20 @@ class Classifier(nn.Module):
     def __init__(self, classes_size):
         super(Classifier, self).__init__()
         self.classes_size = classes_size
+        self.classifier_info = self.make_classifier_info()
+        self.classifier = self.make_classifier()
+
+    def make_classifier_info(self):
+        classifier_info = [
+                        {'input_size':code_size,'output_size':512,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False},
+                        {'input_size':512,'output_size':512,'kernel_size':3,'stride':1,'padding':1,'dilation':1,'bias':False},
+                        {'input_size':512,'output_size':self.classes_size,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False}
+                        ]
+        return classifier_info
+
+    def make_classifier(self):
+        classifier = ClassifierCell(self.classifier_info)
+        return classifier
 
     def classification_loss_fn(self, input, output, protocol):
         loss = 0
@@ -195,24 +209,23 @@ class Classifier(nn.Module):
         return loss
         
     def forward(self, input, protocol):
-        z = input['code'].view(input['code'].size(0),-1,1)
-        q_c_z = torch.exp(input['param']['pi'].log() - torch.sum(0.5*torch.log(2*math.pi*input['param']['var']) +\
-            (z-input['param']['mu'])**2/(2*input['param']['var']),dim=1)) + 10*np.finfo(np.float32).eps
-        q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True)
+        x = self.classifier(input,protocol)
+        x = F.log_softmax(x,dim=1).exp() + 10*np.finfo(np.float32).eps
+        q_c_z = x/x.sum(dim=1,keepdim=True)
         return q_c_z
 
-class Joint(nn.Module):
+class Joint_map(nn.Module):
     def __init__(self,classes_size):
-        super(Joint, self).__init__()
+        super(Joint_map, self).__init__()
         self.classes_size = classes_size
         self.codec = Codec(classes_size)
         self.classifier = Classifier(classes_size)
         self.param = nn.ParameterDict({})
-
+    
     def init_param_protocol(self,dataset,randomGen):
         protocol = {}
         protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
-        protocol['tuning_param']['classification'] = 0
+        protocol['tuning_param']['classification'] = 1
         protocol['init_param_mode'] = 'random'
         protocol['classes_size'] = dataset.classes_size
         protocol['randomGen'] = randomGen
@@ -238,7 +251,7 @@ class Joint(nn.Module):
             protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
         protocol['loss'] = True
         return protocol
-        
+    
     def init_param(self,train_loader,protocol):
         with torch.no_grad(): 
             self.train(False)
@@ -249,8 +262,10 @@ class Joint(nn.Module):
                 output = self(input,protocol)
                 z = output['compression']['code'].view(input['img'].size(0),-1)
                 Z = torch.cat((Z,z),0) if i > 0 else z
+                if(protocol['init_param_mode'] == 'random'):
+                    c = output['classification']
+                    C = torch.cat((C,c),0) if i > 0 else c
             if(protocol['init_param_mode'] == 'random'):
-                C = torch.rand(Z.size(0), protocol['classes_size'],device=device)
                 nk = C.sum(dim=0,keepdim=True) + 10*np.finfo(np.float32).eps
                 self.param['mu'] = nn.Parameter(Z.t().matmul(C)/nk)
                 self.param['var'] = nn.Parameter((Z**2).t().matmul(C)/nk - 2*self.param['mu']*Z.t().matmul(C)/nk + self.param['mu']**2)
@@ -298,7 +313,6 @@ class Joint(nn.Module):
 
     def forward(self, input, protocol):
         output = {}
-        
         input['param'] = self.param
         img = (input['img'] - 0.5) * 2
         encoded = self.codec.encoder(img,protocol)
@@ -311,9 +325,11 @@ class Joint(nn.Module):
             output['compression']['img'] = compression_output
        
         if(protocol['tuning_param']['classification'] > 0):
-            classification_output = self.classifier({'code':code, 'param':input['param']},protocol)
+            classification_output = self.classifier(code,protocol)
             output['classification'] = classification_output
-        output['loss'] = self.loss_fn(input,output,protocol)
+            
+        if(protocol['loss']):
+            output['loss'] = self.loss_fn(input,output,protocol)
         return output
         
         

@@ -40,8 +40,8 @@ def runExperiment(seed):
     print('Training data size {}, Number of Batches {}, Test data size {}'.format(valid_data_size,len(train_loader),len(test_dataset)))
     last_epoch = 0
     model = eval('models.{}.{}(classes_size=train_dataset.classes_size).to(device)'.format(model_dir,model_name)) 
-    optimizer = optim.Adam(model.parameters(),lr=lr, weight_decay=5e-4)
-    #optimizer = optim.SGD(model.parameters(),lr=lr, momentum=0.9, weight_decay=5e-4)
+    #optimizer = optim.Adam(model.parameters(),lr=lr, weight_decay=5e-4)
+    optimizer = optim.SGD(model.parameters(),lr=lr, momentum=0.9, weight_decay=5e-4)
     scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
     if(resume_mode == 2):
         _,model,_,_ = resume(model,optimizer,scheduler,resume_model_TAG)       
@@ -50,9 +50,11 @@ def runExperiment(seed):
     if(world_size > 1):
         model = torch.nn.DataParallel(model,device_ids=device_ids)
     best_pivot = 255
-    best_pivot_name = 'loss'
-    train_protocol = init_train_protocol(train_dataset)
-    test_protocol = init_test_protocol(test_dataset)
+    best_pivot_name = 'cluster_acc'
+    param_protocol = model.init_param_protocol(train_dataset,randomGen)
+    model.init_param(train_loader,param_protocol)
+    train_protocol = model.init_train_protocol(train_dataset)
+    test_protocol = model.init_test_protocol(test_dataset)
     train_meter_panel = Meter_Panel(metric_names)
     test_meter_panel = Meter_Panel(metric_names)
     for epoch in range(last_epoch, validated_num_epochs+1):
@@ -67,19 +69,19 @@ def runExperiment(seed):
             save_result = {'config':config.PARAM,'epoch':epoch+1,'model_dict':model_state_dict,'optimizer_dict':optimizer.state_dict(),
                 'scheduler_dict': scheduler.state_dict(),'train_meter_panel':train_meter_panel,'test_meter_panel':test_meter_panel}
             save(save_result,'./output/model/{}_checkpoint.pkl'.format(model_TAG))
-            if(best_pivot > test_meter_panel.panel[best_pivot_name].avg):
+            if(best_pivot < test_meter_panel.panel[best_pivot_name].avg):
                 best_pivot = test_meter_panel.panel[best_pivot_name].avg
                 save(save_result,'./output/model/{}_best.pkl'.format(model_TAG))
     return
-
+   
 def train(train_loader,model,optimizer,epoch,protocol):
     meter_panel = Meter_Panel(metric_names)
     model.train(True)
     end = time.time()
     for i, input in enumerate(train_loader):
-        input = collate(input)
+        input = model.collate(input)
         input = dict_to_device(input,device)
-        protocol = update_protocol(input,protocol)
+        protocol = model.update_protocol(input,protocol)
         output = model(input,protocol)
         output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
         optimizer.zero_grad()
@@ -94,7 +96,7 @@ def train(train_loader,model,optimizer,epoch,protocol):
         if i % (len(train_loader)//5) == 0:
             estimated_finish_time = str(datetime.timedelta(seconds=(len(train_loader)-i-1)*batch_time))
             print('Train Epoch: {}[({:.0f}%)]{}, Estimated Finish Time: {}'.format(
-                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','psnr','cluster_acc','batch_time']), estimated_finish_time))
+                epoch, 100. * i / len(train_loader), meter_panel.summary(['loss','psnr','batch_time']), estimated_finish_time))
     return meter_panel
 
 def test(validation_loader,model,epoch,protocol,model_TAG):
@@ -103,9 +105,9 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
         model.train(False)
         end = time.time()
         for i, input in enumerate(validation_loader):
-            input = collate(input)
+            input = model.collate(input)
             input = dict_to_device(input,device)
-            protocol = update_protocol(input,protocol)  
+            protocol = model.update_protocol(input,protocol)  
             output = model(input,protocol)
             output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
             evaluation = meter_panel.eval(input,output,protocol)
@@ -113,48 +115,9 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
             meter_panel.update(evaluation,batch_size)
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
-        print(torch.nn.functional.log_softmax(model.classifier.classifier_prior['y']))
-        print(model.codec.codec_prior['mu'])
-        print(model.codec.codec_prior['var'])
         save_img(input['img'],'./output/img/image.png')
         save_img(output['compression']['img'],'./output/img/image_{}_{}.png'.format(model_TAG,epoch))
     return meter_panel
-
-def init_train_protocol(dataset):
-    protocol = {}
-    protocol['tuning_param'] = config.PARAM['tuning_param']
-    protocol['metric_names'] = config.PARAM['metric_names'][:-1]
-    protocol['topk'] = config.PARAM['topk']
-    protocol['balance'] = config.PARAM['balance']
-    if(protocol['balance']):
-        protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
-    return protocol 
-
-def init_test_protocol(dataset):
-    protocol = {}
-    protocol['tuning_param'] = config.PARAM['tuning_param']
-    protocol['metric_names'] = config.PARAM['metric_names']
-    protocol['topk'] = config.PARAM['topk']
-    protocol['balance'] = config.PARAM['balance']
-    if(protocol['balance']):
-        protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
-    return protocol
-    
-def update_protocol(input,protocol):
-    protocol['depth'] = config.PARAM['max_depth']
-    protocol['jump_rate'] = config.PARAM['jump_rate']
-    if(input['img'].size(1)==1):
-        protocol['mode'] = 'L'
-    elif(input['img'].size(1)==3):
-        protocol['mode'] = 'RGB'
-    else:
-        raise ValueError('Wrong number of channel')
-    return protocol 
-    
-def collate(input):
-    for k in input:
-        input[k] = torch.stack(input[k],0)
-    return input
   
 def print_result(epoch,train_meter_panel,test_meter_panel):
     estimated_finish_time = str(datetime.timedelta(seconds=(max_num_epochs - epoch - 1)*train_meter_panel.panel['batch_time'].sum))
