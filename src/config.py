@@ -11,7 +11,7 @@ def init():
         'resume_TAG': '',
         'special_TAG': '',
         'lr': 1e-1,
-        'milestones': [150,250],
+        'milestones': [50,100,150],
         'gamma': 0.1,
         'branch': False,
         'balance': False,

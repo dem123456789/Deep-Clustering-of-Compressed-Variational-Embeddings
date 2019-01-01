@@ -157,7 +157,7 @@ class Codec(nn.Module):
             loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(input['param']['var'])+\
                 q_var/input['param']['var'] + (q_mu-input['param']['mu'])**2/input['param']['var'], dim=1), dim=1)
             loss = loss + (-0.5*torch.sum(1+q_var+math.log(2*math.pi), 1)).squeeze(1)
-        loss = loss.mean()
+        loss = loss.sum()/input['img'].numel()
         return loss
 
 class ClassifierCell(nn.Module):
@@ -191,7 +191,6 @@ class Classifier(nn.Module):
     def make_classifier_info(self):
         classifier_info = [
                         {'input_size':code_size,'output_size':512,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False},
-                        {'input_size':512,'output_size':512,'kernel_size':3,'stride':1,'padding':1,'dilation':1,'bias':False},
                         {'input_size':512,'output_size':self.classes_size,'kernel_size':1,'stride':1,'padding':0,'dilation':1,'bias':False}
                         ]
         return classifier_info
@@ -205,7 +204,7 @@ class Classifier(nn.Module):
         if(protocol['tuning_param']['classification'] > 0): 
             q_c_z = output['classification']
             loss = loss + (q_c_z*(q_c_z.log()-input['param']['pi'].log())).sum(dim=1)
-            loss = loss.mean()
+            loss = loss.sum()/input['img'].numel()
         return loss
         
     def forward(self, input, protocol):
