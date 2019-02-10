@@ -125,6 +125,8 @@ class Meter_Panel(object):
         fmt_str = ''
         if('loss' in names and 'loss' in self.panel):
             fmt_str += '\tLoss: {:.4f}'.format(self.panel['loss'].avg)
+        if('loss_base' in names and 'loss_base' in self.panel):
+            fmt_str += '\tLoss_base: {:.4f}'.format(self.panel['loss_base'].avg)
         if('psnr' in names and 'psnr' in self.panel):
             fmt_str += '\tPSNR: {:.4f}'.format(self.panel['psnr'].avg)
         if('acc' in names and 'acc' in self.panel):
@@ -192,6 +194,7 @@ class Metric(object):
         metric_names = protocol['metric_names']
         evaluation = {}
         evaluation['loss'] = output['loss'].item()
+        #evaluation['loss_base'] = output['loss_base'].item()
         if(tuning_param['compression'] > 0):
             if('psnr' in metric_names):
                 evaluation['psnr'] = PSNR(output['compression']['img'],input['img'])
