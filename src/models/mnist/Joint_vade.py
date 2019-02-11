@@ -1,4 +1,3 @@
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -49,96 +48,12 @@ class Joint_vade(nn.Module):
 		x = torch.sigmoid(self.h0(x))
 		return x
 
-	def classifier(self, input, protocol):
-		
+	def classifier(self, input, protocol):		
 		z = input['code'].view(input['code'].size(0),-1,1)
 		q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*self.param['var']) +\
 			(z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-20
-		if not config.PARAM['printed']:
-			print(10*np.finfo(np.float32).eps)
-			config.PARAM['printed'] = True
-		q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #Nx1
-		
+		q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #Nx1		
 		return q_c_z
-
-	def init_param_protocol(self,dataset,randomGen):
-		protocol = {}
-		protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
-		protocol['tuning_param']['classification'] = 0
-		protocol['init_param_mode'] = 'kmeans'
-		protocol['classes_size'] = dataset.classes_size
-		protocol['randomGen'] = randomGen
-		protocol['loss'] = False
-		return protocol
-
-	def init_train_protocol(self,dataset):
-		protocol = {}
-		protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
-		protocol['metric_names'] = config.PARAM['metric_names'][:-1]
-		protocol['topk'] = config.PARAM['topk']
-		if(config.PARAM['balance']):
-			protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
-		protocol['loss'] = True
-		return protocol 
-
-	def init_test_protocol(self,dataset):
-		protocol = {}
-		protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
-		protocol['metric_names'] = config.PARAM['metric_names']
-		protocol['topk'] = config.PARAM['topk']
-		if(config.PARAM['balance']):
-			protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
-		protocol['loss'] = True
-		return protocol
-		
-	def init_param(self,train_loader,protocol):
-		with torch.no_grad():
-			self.train(False)
-			for i, input in enumerate(train_loader):
-				input = self.collate(input)
-				input = dict_to_device(input,device)
-				protocol = self.update_protocol(input,protocol)
-				output = self(input,protocol)
-				z = output['compression']['code']
-				Z = torch.cat((Z,z),0) if i > 0 else z
-			if(protocol['init_param_mode'] == 'random'):
-				C = torch.rand(Z.size(0), protocol['classes_size'],device=device)
-				nk = C.sum(dim=0,keepdim=True) + 10*np.finfo(np.float32).eps
-				self.param['mu'].data.copy_(Z.t().matmul(C)/nk)
-				self.param['var'].data.copy_((Z**2).t().matmul(C)/nk - 2*self.param['mu']*Z.t().matmul(C)/nk + self.param['mu']**2)
-			elif(protocol['init_param_mode'] == 'kmeans'):
-				from sklearn.cluster import KMeans
-				C = torch.rand(Z.size(0), protocol['classes_size'],device=device)
-				C = C.new_zeros(C.size())
-				km = KMeans(n_clusters=protocol['classes_size'], n_init=1, random_state=protocol['randomGen']).fit(Z)
-				C[torch.arange(C.size(0)), torch.tensor(km.labels_).long()] = 1
-				nk = C.sum(dim=0,keepdim=True) + 10*np.finfo(np.float32).eps
-				self.param['mu'].data.copy_(Z.t().matmul(C)/nk)
-				self.param['var'].data.copy_((Z**2).t().matmul(C)/nk - 2*self.param['mu']*Z.t().matmul(C)/nk + self.param['mu']**2)
-			elif(protocol['init_param_mode'] == 'gmm'):
-				from sklearn.mixture import GaussianMixture
-				gm = GaussianMixture(n_components=protocol['classes_size'], covariance_type='diag', random_state=protocol['randomGen']).fit(Z)
-				self.param['mu'].data.copy_(torch.tensor(gm.means_.T).float().to(device))
-				self.param['var'].data.copy_(torch.tensor(gm.covariances_.T).float().to(device))
-			else:
-				raise ValueError('Initialization method not supported')
-		return
-		
-	def collate(self,input):
-		for k in input:
-			input[k] = torch.stack(input[k],0)
-		return input
-
-	def update_protocol(self,input,protocol):
-		protocol['depth'] = config.PARAM['max_depth']
-		protocol['jump_rate'] = config.PARAM['jump_rate']
-		if(input['img'].size(1)==1):
-			protocol['mode'] = 'L'
-		elif(input['img'].size(1)==3):
-			protocol['mode'] = 'RGB'
-		else:
-			raise ValueError('Wrong number of channel')
-		return protocol 
 
 	def loss_fn_base(self, input, output, protocol):
 		N = output['compression']['code'].size()[0]

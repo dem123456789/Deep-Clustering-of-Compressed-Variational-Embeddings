@@ -23,8 +23,8 @@ class WheatImage(Dataset):
         if(self.label_mode == 'binary'):
             self.classes = ['cracked','germinant','moldy','mothy','normal','sick']
             self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
-            data = make_img_dataset(self.root, self.extensions, self.classes_to_labels) 
-            data['label'] = merge_classes(data['label'], {'0':0,'1':0,'2':0,'3':0,'4':1,'5':0})
+            self.data = make_img_dataset(self.root, self.extensions, self.classes_to_labels) 
+            self.data['label'] = merge_classes(self.data['label'], {'0':0,'1':0,'2':0,'3':0,'4':1,'5':0})
             self.classes = ['abnormal','normal']
             self.classes_size = len(self.classes)
             self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
@@ -32,8 +32,7 @@ class WheatImage(Dataset):
             self.classes = ['cracked','germinant','moldy','mothy','normal','sick']
             self.classes_size = len(self.classes)
             self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
-            data = make_img_dataset(self.root, self.extensions, self.classes_to_labels)
-        self.data = data
+            self.data = make_img_dataset(self.root, self.extensions, self.classes_to_labels)
         self.data['label'] = torch.tensor(self.data['label'])
         self.classes_counts = make_classes_counts(self.data['label'],self.classes_size)        
         self.transform = transform

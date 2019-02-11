@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision
 import numpy as np
 import config
 import os
@@ -9,7 +10,10 @@ import time
 from PIL import Image
 from utils import *
 
-class Magick(object):
+config.init()
+device = config.PARAM['device']
+
+class Magick(nn.Module):
     def __init__(self):
         super(Magick, self).__init__()
         self.supported_format = ['jpg','jp2','bpg','webp','png']
@@ -20,59 +24,76 @@ class Magick(object):
             print('not supported format')
             exit()
         filename = protocol['filename']
-        save_img(input,'./output/tmp/{filename}.png'.format(filename=filename))
-        if(format in ['jpg','jp2','webp','png']):
-            head = 'convert ./output/tmp/{filename}.png'.format(filename=filename)
-            tail = './output/tmp/{filename}_converted.{format}'.format(filename=filename,format=format)
+        for i in range(input.size(0)):
+            save_img(input[[i]],'./output/tmp/{filename}_{idx}.png'.format(filename=filename,idx=i))
+        if(format in ['jpg','jp2','bpg','webp','png']):
+            head = 'magick mogrify '
+            tail = './output/tmp/*.png'
             quality = protocol['quality']
             sampling_factor = protocol['sampling_factor']
-            option = ''
+            option = '-format {} -depth 8 '.format(format)
             if(quality is not None):
                 option += '-quality {quality} '.format(quality=quality)
-            if(sampling_factor is not None):
+            if(sampling_factor is not None and (format in ['jpg','webp'])):
                 option += '-sampling-factor {sampling_factor} '.format(sampling_factor=sampling_factor)
-            command = '{head} {option}{tail}'.format(head=head, option=option, tail = tail)
-        elif(format == 'bpg'):
-            head = 'bpgenc ./output/tmp/{filename}.png'.format(filename=filename)
-            tail = '-o ./output/tmp/{filename}_converted.bpg'.format(filename=filename)
-            quality = protocol['quality']
-            sampling_factor = protocol['sampling_factor']
-            option = ''
-            if(quality is not None):
-                quality = 50-quality//2
-                option += '-q {quality} '.format(quality=quality)
-            if(sampling_factor is not None):
-                sampling_factor = ''.join(sampling_factor.split(':'))
-                option += '-f {sampling_factor} '.format(sampling_factor=sampling_factor)
-            command = '{head} {option}{tail}'.format(head=head, option=option, tail = tail)
-        try:
-            os.system(command)
-        except:
-            time.sleep(0.1)
-            os.system(command)
-        code = open('./output/tmp/{filename}_converted.{format}'.format(filename=filename,format=format), 'rb').read()
+            command = '{head}{option}{tail}'.format(head=head, option=option, tail=tail)
+        os.system(command)
+        code = []
+        for i in range(input.size(0)):
+            f = open('./output/tmp/{filename}_{idx}.{format}'.format(filename=filename,idx=i,format=format), 'rb')
+            buffer = f.read()
+            f.close()
+            code.append(np.frombuffer(buffer,dtype=np.uint8))
         return code
 
-    def decode(self,protocol):
+    def decode(self,code,protocol):
         format = protocol['format']
         if format not in self.supported_format:
             print('not supported format')
             exit()
-        filename = protocol['filename']       
-        if(format in ['jpg','jp2','webp','png']):
-            command = 'convert ./output/tmp/{filename}_converted.{format} ./output/tmp/{filename}.png'.format(filename=filename,format=format)
-        elif(format == 'bpg'):
-            command = 'bpgdec -o ./output/tmp/{filename}.png ./output/tmp/{filename}_converted.bpg'.format(filename=filename)
-        try:
+        filename = protocol['filename']
+        for i in range(len(code)): 
+            try:
+                f = open('./output/tmp/{filename}_{idx}.{format}'.format(filename=filename,idx=i,format=format), 'wb')
+                f.write(code[i])
+                f.close()
+            except OSError:
+                time.sleep(0.1)
+                f = open('./output/tmp/{filename}_{idx}.{format}'.format(filename=filename,idx=i,format=format), 'wb')
+                f.write(code[i])
+                f.close()
+        if(format in ['jpg','jp2','bpg','webp','png']):
+            command = 'magick mogrify -format png -depth 8 ./output/tmp/*.{format}'.format(format=format)
             os.system(command)
-        except:
-            time.sleep(0.1)
-            os.system(command)
-        code = open('./output/tmp/{filename}.png'.format(filename=filename), 'rb').read()
-        bytesio = io.BytesIO(code)
-        output = Image.open(bytesio)
-        output = transforms.ToTensor()(output)
-        output = output.unsqueeze(0)
+        output = []
+        ToTensor = torchvision.transforms.ToTensor()
+        for i in range(len(code)):
+            output.append(ToTensor(Image.open('./output/tmp/{filename}_{idx}.png'.format(filename=filename,idx=i))))
+        output = torch.stack(output,dim=0).to(device)
+        return output
+
+    def compression_loss_fn(self, input, output, protocol):
+        if(protocol['loss_mode']['compression'] == 'bce'):
+            loss_fn = F.binary_cross_entropy
+        elif(protocol['loss_mode']['compression'] == 'mse'):
+            loss_fn = F.mse_loss
+        elif(protocol['loss_mode']['compression'] == 'mae'):
+            loss_fn = F.l1_loss
+        else:
+            raise ValueError('compression loss mode not supported') 
+        if(protocol['tuning_param']['compression'] > 0):
+            loss = loss_fn(output['compression']['img'],input['img'],reduction='mean')
+            loss = loss.mean()
+        else:
+            loss = torch.tensor(0,device=device,dtype=torch.float32) 
+        return loss
+        
+    def forward(self,input,protocol):
+        output = {'compression':{}}
+        output['compression']['code'] = self.encode(input['img'],protocol)
+        output['compression']['img'] = self.decode(output['compression']['code'],protocol)
+        compression_loss = self.compression_loss_fn(input,output,protocol)
+        output['loss'] = protocol['tuning_param']['compression']*compression_loss
         return output
 
 

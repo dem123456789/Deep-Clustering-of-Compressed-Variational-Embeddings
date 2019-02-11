@@ -79,6 +79,7 @@ class CIFAR10(Dataset):
         self.img = self.img.transpose((0, 2, 3, 1))  # convert to HWC       
         self._load_meta()
         self.classes_size = 10 
+        self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
         
     def _load_meta(self):
         path = os.path.join(self.root, self.base_folder, self.meta['filename'])

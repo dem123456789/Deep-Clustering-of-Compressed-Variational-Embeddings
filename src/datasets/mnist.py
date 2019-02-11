@@ -10,6 +10,7 @@ from .utils import download_url, make_branch_classes_to_labels
 
 
 class MNIST(Dataset):
+    data_name = 'MNIST'
     urls = [
         'http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz',
         'http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz',
@@ -19,7 +20,9 @@ class MNIST(Dataset):
     training_file = 'training.pt'
     test_file = 'test.pt'
     classes = ['0','1','2','3','4','5','6','7','8','9']
-
+    feature_dim = {'img':1}
+    output_names = ['img','label']
+    
     def __init__(self, root, train=True, transform=None, download=False):
         self.root = os.path.expanduser(root)
         self.transform = transform
@@ -38,7 +41,7 @@ class MNIST(Dataset):
         self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
         
     def __getitem__(self, index):
-        img, label = self.img[index], torch.tensor(self.label[index])
+        img, label = self.img[index], self.label[index]
         img = Image.fromarray(img.numpy(), mode='L')       
         input = {'img': img, 'label': label}
         if self.transform is not None:
@@ -107,13 +110,16 @@ class MNIST(Dataset):
         return fmt_str
 
 class EMNIST(MNIST):
+    data_name = 'EMNIST'
     url = 'http://www.itl.nist.gov/iaui/vip/cs_links/EMNIST/gzip.zip'
     splits = ('byclass', 'bymerge', 'balanced', 'letters', 'digits', 'mnist')
     digits_classes = ['0','1','2','3','4','5','6','7','8','9']
     upper_letters_classes = ['A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z']
     lower_letters_classes = ['a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z']
     merged_classes = ['c','i','j','k','l','m','o','p','s','u','v','w','x','y','z']
-    
+    feature_dim = {'img':1}
+    output_names = ['img','label']
+        
     def __init__(self, root, split, branch, **kwargs):
         if split not in self.splits:
             raise ValueError('Split "{}" not found. Valid splits are: {}'.format(split, ', '.join(self.splits)))
@@ -218,6 +224,7 @@ class EMNIST(MNIST):
 
         
 class FashionMNIST(MNIST):
+    data_name = 'FashionMNIST'
     urls = [
         'http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-images-idx3-ubyte.gz',
         'http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-labels-idx1-ubyte.gz',
@@ -226,7 +233,8 @@ class FashionMNIST(MNIST):
     ]
     classes = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal',
                'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
-
+    feature_dim = {'img':1}
+    output_names = ['img','label']
 
 def get_int(b):
     return int(codecs.encode(b, 'hex'), 16)

@@ -8,7 +8,9 @@ import cv2
 import errno
 import numpy as np
 import torch.nn as nn
+import collections.abc as container_abcs
 from PIL import Image
+from itertools import repeat
 from matplotlib import pyplot as plt
 from torchvision.utils import make_grid
 from torchvision.utils import save_image
@@ -142,7 +144,7 @@ def save_img(img,path,nrow=0,batch_first=False):
         if(nrow!=0):
             save_image(img,path,padding=0,nrow=nrow)
         else:
-            save_image(img,path,padding=0,)
+            save_image(img,path,padding=0)
     elif(img.dim()==5 and nrow!=0):
         dirname = os.path.dirname(path)
         makedir_exist_ok(dirname)
@@ -193,6 +195,32 @@ def pad_sequence(sequences, batch_first=False, padding_value=0):
 
     return out_tensor, lengths
     
+def _ntuple(n):
+    def parse(x):
+        if isinstance(x, container_abcs.Iterable) and not isinstance(x, str):
+            return x
+        return tuple(repeat(x, n))
+    return parse  
+    
+def apply_along_dim(input, *other_input, fn, dim, m='flat', **other_kinput):
+    _tuple = _ntuple(2)
+    dim = _tuple(dim)
+    output = []
+    if(m=='list'):
+        for i, input_i in enumerate(torch.unbind(input, dim=dim[0])):
+            cur_other_input = [x[i] for x in other_input]
+            cur_other_kinput = {k:other_kinput[k][i] for k in other_kinput}
+            output.append(fn(input_i,*cur_other_input,**cur_other_kinput))
+    elif(m=='flat'):
+        for i, input_i in enumerate(torch.unbind(input, dim=dim[0])):
+            cur_other_input = other_input
+            cur_other_kinput = other_kinput
+            output.append(fn(input_i,*cur_other_input,**cur_other_kinput))  
+    else:
+        raise ValueError('Apply mode not supported')
+    output = torch.stack(output, dim=dim[1])
+    return output
+
 # ===================Function===================== 
 def p_inverse(A):
     pinv = (A.t().matmul(A)).inverse().matmul(A.t())

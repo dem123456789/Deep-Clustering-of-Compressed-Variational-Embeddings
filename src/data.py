@@ -19,23 +19,36 @@ seed = 1234
 if_dist = False
 world_size = config.PARAM['world_size']
 num_workers = config.PARAM['num_workers']
+normalize = config.PARAM['normalize']
 branch = config.PARAM['branch']
 device = config.PARAM['device']
 
 def fetch_dataset(data_name):
     print('fetching data {}...'.format(data_name))
     if(data_name=='MNIST'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/test/'.format(data_name)
-        transform = transforms.Compose([transforms.Resize((32,32)),
-                                        transforms.ToTensor()])            
-        train_dataset = datasets.MNIST(root=train_dir, train=True, download=True, transform=transform)
-        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=transform)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/test'.format(data_name)
+        train_dataset = datasets.MNIST(root=train_dir, train=True, download=True, transform=transforms.ToTensor())
+        if(normalize):
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.Resize((32,32)),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.Resize((32,32)),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.Resize((32,32)),
+                                            transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.Resize((32,32)),
+                                            transforms.ToTensor()])           
+        train_dataset.transform = train_transform
+        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=test_transform)
 
     elif(data_name=='EMNIST' or data_name=='EMNIST_byclass' or data_name=='EMNIST_bymerge' or
         data_name=='EMNIST_balanced' or data_name=='EMNIST_letters' or data_name=='EMNIST_digits' or data_name=='EMNIST_mnist'):
-        train_dir = './data/{}/train/'.format(data_name.split('_')[0])
-        test_dir = './data/{}/test/'.format(data_name.split('_')[0])
+        train_dir = './data/{}/train'.format(data_name.split('_')[0])
+        test_dir = './data/{}/test'.format(data_name.split('_')[0])
         transform = transforms.Compose([transforms.Resize((32,32)),
                                         transforms.ToTensor()])
         split = 'balanced' if len(data_name.split('_')) == 1 else data_name.split('_')[1]
@@ -43,83 +56,132 @@ def fetch_dataset(data_name):
         test_dataset = datasets.EMNIST(root=test_dir, split=split, branch=branch, train=False, download=True, transform=transform)
 
     elif(data_name=='FashionMNIST'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/test/'.format(data_name)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/test'.format(data_name)
         transform = transforms.Compose([transforms.Resize((32,32)),
                                         transforms.ToTensor()])            
         train_dataset = datasets.FashionMNIST(root=train_dir, train=True, download=True, transform=transform)
         test_dataset = datasets.FashionMNIST(root=test_dir, train=False, download=True, transform=transform)
         
     elif(data_name=='CIFAR10'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/validation/'.format(data_name)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/validation'.format(data_name)
         train_dataset = datasets.CIFAR10(train_dir, train=True, transform=transforms.ToTensor(), download=True)
-        mean, std = make_stats(data_name,train_dataset)
-        train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
-                                        transforms.RandomHorizontalFlip(),
-                                        transforms.ToTensor(),
-                                        transforms.Normalize(mean, std)])
-        test_transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize(mean, std)])
-        train_dataset.transform=train_transform
+        if(normalize):
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.ToTensor()])            
+        train_dataset.transform = train_transform
         test_dataset = datasets.CIFAR10(test_dir, train=False, transform=test_transform, download=True)
 
     elif(data_name=='CIFAR100'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/validation/'.format(data_name)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/validation'.format(data_name)
         train_dataset = datasets.CIFAR100(train_dir, branch=branch, train=True, transform=transforms.ToTensor(), download=True)
-        mean, std = make_stats(data_name,train_dataset)
-        train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
-                                        transforms.RandomHorizontalFlip(),
-                                        transforms.ToTensor(),
-                                        transforms.Normalize(mean, std)])
-        test_transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Normalize(mean, std)])
-        train_dataset.transform=train_transform
+        if(normalize):
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.RandomCrop(32, padding=4),
+                                            transforms.RandomHorizontalFlip(),
+                                            transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.ToTensor()])  
+        train_dataset.transform = train_transform
         test_dataset = datasets.CIFAR100(test_dir, branch=branch, train=False, transform=test_transform, download=True)
         
     elif(data_name=='SVHN'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/validation/'.format(data_name)
-        transform = transforms.Compose([transforms.ToTensor()])
-        train_dataset = datasets.SVHN(train_dir, split='train', transform=transform, download=True)
-        test_dataset = datasets.SVHN(test_dir, split='test', transform=transform, download=True)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/validation'.format(data_name)
+        train_dataset = datasets.SVHN(train_dir, split='train', transform=transforms.ToTensor(), download=True)
+        if(normalize):
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.ToTensor(),
+                                            transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.ToTensor()])
+        train_dataset.transform = train_transform
+        test_dataset = datasets.SVHN(test_dir, split='test', transform=test_transform, download=True)
         
     elif(data_name=='ImageNet'):
-        train_dir = './data/{}/train/'.format(data_name)
-        test_dir = './data/{}/validation/'.format(data_name)
+        train_dir = './data/{}/train'.format(data_name)
+        test_dir = './data/{}/validation'.format(data_name)
         train_dataset = datasets.ImageFolder(train_dir, transform=transforms.ToTensor())
         mean, std = make_stats(data_name,train_dataset)
-        transform = transforms.Compose([transforms.Resize((256,256)),
+        transform = transforms.Compose([transforms.Resize((224,224)),
                                         transforms.ToTensor(),
                                         transforms.Normalize(mean, std)])
-        train_dataset.transform=transform
+        train_dataset.transform = transform
         test_dataset = datasets.ImageFolder(test_dir, transform=transform)
 
+    elif(data_name=='CUB2011'):
+        train_dir = './data/{}/train'.format(data_name.split('_')[0])
+        test_dir = './data/{}/validation'.format(data_name.split('_')[0])
+        train_dataset = datasets.CUB2011(train_dir, transform=transforms.Compose([transforms.Resize((224,224)),transforms.ToTensor()]), download=True)
+        if(normalize):
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.Resize((224,224)),
+                                                transforms.ToTensor(),
+                                                transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.Resize((224,224)),
+                                                transforms.ToTensor(),
+                                                transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.Resize((224,224)),
+                                                transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.Resize((224,224)),
+                                                transforms.ToTensor()])           
+        train_dataset.transform = train_transform
+        test_dataset = datasets.CUB2011(test_dir, transform=test_transform, download=True)
+        
     elif(data_name=='WheatImage' or data_name=='WheatImage_binary' or data_name=='WheatImage_six'):
-        train_dir = './data/{}/train/'.format(data_name.split('_')[0])
-        test_dir = './data/{}/validation/'.format(data_name.split('_')[0])
+        train_dir = './data/{}/train'.format(data_name.split('_')[0])
+        test_dir = './data/{}/validation'.format(data_name.split('_')[0])
         label_mode = 'six' if len(data_name.split('_')) == 1 else data_name.split('_')[1]
-        train_dataset = datasets.WheatImage(train_dir, label_mode=label_mode, transform=transforms.Compose([transforms.Resize((256,352)),
+        train_dataset = datasets.WheatImage(train_dir, label_mode=label_mode, transform=transforms.Compose([transforms.Resize((224,288)),
                                                                                                             transforms.ToTensor()]))
-        stats = make_stats(train_dataset,batch_size=128)
-        train_transform = transforms.Compose([transforms.Resize((256,352)),
-                                            transforms.RandomHorizontalFlip(),
-                                            transforms.RandomVerticalFlip(),
-                                            transforms.ToTensor(),
-                                            transforms.Normalize(stats)])
-        test_transform = transforms.Compose([transforms.Resize((256,352)),
-                                            transforms.ToTensor(),
-                                            transforms.Normalize(stats)])
-        train_dataset.transform=train_transform
+        if(normalize):                                                                                                    
+            stats = make_stats(train_dataset,batch_size=128)
+            train_transform = transforms.Compose([transforms.Resize((224,288)),
+                                                transforms.RandomHorizontalFlip(),
+                                                transforms.RandomVerticalFlip(),
+                                                transforms.ToTensor(),
+                                                transforms.Normalize(stats)])
+            test_transform = transforms.Compose([transforms.Resize((224,288)),
+                                                transforms.ToTensor(),
+                                                transforms.Normalize(stats)])
+        else:
+            train_transform = transforms.Compose([transforms.Resize((224,288)),
+                                                transforms.RandomHorizontalFlip(),
+                                                transforms.RandomVerticalFlip(),
+                                                transforms.ToTensor()])
+            test_transform = transforms.Compose([transforms.Resize((224,288)),
+                                                transforms.ToTensor()])
+        train_dataset.transform = train_transform
         test_dataset = datasets.WheatImage(test_dir, label_mode=label_mode, transform=test_transform)
             
     elif(data_name=='CocoDetection'):
-        train_dir = './data/Coco/train2017/'
+        train_dir = './data/Coco/train2017'
         train_ann = './data/Coco/annotations/instances_train2017.json'
-        test_dir = './data/Coco/val2017/'
+        test_dir = './data/Coco/val2017'
         test_ann = './data/Coco/annotations/instances_val2017.json'
-        transform = transforms.Compose([transforms.Resize((256,256)),
+        transform = transforms.Compose([transforms.Resize((224,224)),
                                         transforms.ToTensor()])
         train_dataset = datasets.CocoDetection(
             train_dir, train_ann, transform=transform)
@@ -127,11 +189,11 @@ def fetch_dataset(data_name):
             test_dir, test_ann, transform=transform)
 
     elif(data_name=='CocoCaptions'):
-        train_dir = './data/Coco/train2017/'
+        train_dir = './data/Coco/train2017'
         train_ann = './data/Coco/annotations/captions_train2017.json'
-        test_dir = './data/Coco/val2017/'
+        test_dir = './data/Coco/val2017'
         test_ann = './data/Coco/annotations/captions_val2017.json'
-        transform = transforms.Compose([transforms.Resize((256,256)),
+        transform = transforms.Compose([transforms.Resize((224,224)),
                                         transforms.ToTensor()])
         train_dataset = datasets.CocoCaptions(
             train_dir, train_ann, transform=transform)
@@ -139,9 +201,9 @@ def fetch_dataset(data_name):
             test_dir, test_ann, transform=transform)
             
     elif(data_name=='VOCDetection'):
-        train_dir = './data/VOC/VOCdevkit/'
-        test_dir = './data/VOC/VOCdevkit/'
-        transform = transforms.Compose([transforms.Resize((256,256)),
+        train_dir = './data/VOC/VOCdevkit'
+        test_dir = './data/VOC/VOCdevkit'
+        transform = transforms.Compose([transforms.Resize((224,224)),
                                         transforms.ToTensor()])
         train_dataset = datasets.VOCDetection(
             train_dir, 'trainval', transform=transform)
@@ -149,35 +211,35 @@ def fetch_dataset(data_name):
             test_dir, 'test', transform=transform)
 
     elif(data_name=='VOCSegmentation'):
-        train_dir = './data/VOC/VOCdevkit/'
-        test_dir = './data/VOC/VOCdevkit/'
-        transform = transforms.Compose([transforms.Resize((256,256)),
+        train_dir = './data/VOC/VOCdevkit'
+        test_dir = './data/VOC/VOCdevkit'
+        transform = transforms.Compose([transforms.Resize((224,224)),
                                         transforms.ToTensor()])
         train_dataset = datasets.VOCSegmentation(train_dir, 'trainval', transform=transform)
         test_dataset = datasets.VOCSegmentation(test_dir, 'test', transform=transform)
 
     elif(data_name=='MOSI' or data_name=='MOSI_binary' or data_name=='MOSI_five' or data_name=='MOSI_seven' or data_name=='MOSI_regression'):
-        train_dir = './data/{}/'.format(data_name.split('_')[0])
-        test_dir = './data/{}/'.format(data_name.split('_')[0])
+        train_dir = './data/{}'.format(data_name.split('_')[0])
+        test_dir = './data/{}'.format(data_name.split('_')[0])
         label_mode = 'five' if len(data_name.split('_')) == 1 else data_name.split('_')[1]
         train_dataset = datasets.MOSI(train_dir, split='trainval', label_mode=label_mode, download=True)
         stats = make_stats(train_dataset,batch_size=1)
         train_transform = transforms.Compose([transforms.Normalize(stats)])
         test_transform = transforms.Compose([transforms.Normalize(stats)])
-        train_dataset.transform=train_transform
+        train_dataset.transform = train_transform
         test_dataset = datasets.MOSI(test_dir, split='test', label_mode=label_mode, download=True, transform=test_transform)
         
     elif(data_name =='Kodak'):
         train_dataset = None
         transform = transforms.Compose([transforms.ToTensor()])
-        test_dir = './data/{}/'.format(data_name)
+        test_dir = './data/{}'.format(data_name)
         test_dataset = datasets.ImageFolder(
             test_dir, transform)
             
     elif(data_name =='UCID'):
         train_dataset = None
         transform = transforms.Compose([transforms.ToTensor()])
-        test_dir = './data/{}/'.format(data_name)
+        test_dir = './data/{}'.format(data_name)
         test_dataset = datasets.ImageFolder(
             test_dir, transform)
     else:
@@ -194,8 +256,8 @@ def input_collate(batch):
         return output
     else:
         return default_collate(batch)
-   
-def split_dataset(train_dataset,test_dataset,data_size,batch_size,radomGen,collate_fn=input_collate):
+
+def split_dataset(train_dataset,test_dataset,data_size,batch_size,radomGen,shuffle=True,collate_fn=input_collate):
     indices = list(range(len(train_dataset)))
     data_idx = radomGen.choice(indices, size=data_size, replace=False)
     if(isinstance(batch_size, int)):
@@ -206,10 +268,9 @@ def split_dataset(train_dataset,test_dataset,data_size,batch_size,radomGen,colla
         else:
             batch_size[i] = batch_size[i]*world_size
     train_batch_size,test_batch_size = batch_size
-    train_dataset = torch.utils.data.Subset(train_dataset, data_idx)
-    train_sampler = DistributedSampler(train_dataset) if (world_size > 1 and if_dist) else None           
+    train_dataset = torch.utils.data.Subset(train_dataset, data_idx)       
     train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
-                shuffle=(train_sampler is None), batch_size=train_batch_size, pin_memory=True, sampler=train_sampler, num_workers=num_workers*world_size, collate_fn=collate_fn)    
+                shuffle=shuffle, batch_size=train_batch_size, pin_memory=True, sampler=None, num_workers=num_workers*world_size, collate_fn=collate_fn)    
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                 batch_size=test_batch_size, pin_memory=True, num_workers=num_workers*world_size, collate_fn=collate_fn)
     return train_loader,test_loader
@@ -313,11 +374,7 @@ def make_stats(dataset,reuse=True,batch_size=1000):
             stats[k] = Stats(dataset.feature_dim[k])
         print('Computing mean and std...')
         with torch.no_grad():
-            print(len(data_loader))
-            i = 0
             for input in data_loader:
-                print(i)
-                i += 1
                 for k in dataset.feature_dim:
                     stats[k].update(input[k])
         save(stats,'./data/stats/{}.pkl'.format(dataset.data_name))
@@ -338,7 +395,7 @@ def unzip(path,mode='zip'):
         print('Done')
     return
             
-def extract_patches_2d(img,patch_shape,step=[1.0,1.0],batch_first=False):
+def extract_patches_2d(img,patch_shape,step=[1.0,1.0]):
     patch_H, patch_W = patch_shape[0], patch_shape[1]
     if(img.size(2)<patch_H):
         num_padded_H_Top = (patch_H - img.size(2))//2
@@ -361,15 +418,13 @@ def extract_patches_2d(img,patch_shape,step=[1.0,1.0],batch_first=False):
         patches_fold_HW = torch.cat((patches_fold_HW,patches_fold_H[:,:,:,-patch_W:,:].permute(0,1,2,4,3).unsqueeze(3)),dim=3)
     patches = patches_fold_HW.permute(2,3,0,1,4,5)
     patches = patches.reshape(-1,img.size(0),img.size(1),patch_H,patch_W)
-    if(batch_first):
-        patches = patches.permute(1,0,2,3,4)
+    patches = patches.transpose(0,1)
     return patches
 
-def reconstruct_from_patches_2d(patches,img_shape,step=[1.0,1.0],batch_first=False):
-    if(batch_first):
-        patches = patches.permute(1,0,2,3,4)
+def reconstruct_from_patches_2d(patches,img_shape,step=[1.0,1.0]):
+    patches = patches.transpose(0,1)
     patch_H, patch_W = patches.size(3), patches.size(4)
-    img_size = (patches.size(1), patches.size(2),max(img_shape[0], patch_H), max(img_shape[1], patch_W))
+    img_size = (patches.size(1), patches.size(2), max(img_shape[0], patch_H), max(img_shape[1], patch_W))
     step_int = [0,0]
     step_int[0] = int(patch_H*step[0]) if(isinstance(step[0], float)) else step[0]
     step_int[1] = int(patch_W*step[1]) if(isinstance(step[1], float)) else step[1]
@@ -404,9 +459,7 @@ def reconstruct_from_patches_2d(patches,img_shape,step=[1.0,1.0],batch_first=Fal
         num_padded_W_Right = patch_W - img_shape[1] - num_padded_W_Left
         img = img[:,:,:,num_padded_W_Left:-num_padded_W_Right]
     return img
-    
-    
-    
+        
 class Stats(object):
     def __init__(self, feature_dim):
         self.feature_dim = feature_dim

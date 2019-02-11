@@ -3,7 +3,7 @@ import sys
 import torch
 from torch.utils.data import Dataset
 from utils import list_dir
-from .utils import default_loader, make_img_dataset
+from .utils import default_loader, make_img_dataset, make_classes_counts
 IMG_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.ppm', '.bmp', '.pgm', '.tif']
 
         
@@ -21,7 +21,7 @@ class DatasetFolder(Dataset):
             self.classes_to_labels = None
             self.classes_size = 0
             self.output_names = ['img']
-        data = make_dataset(self.root, self.extensions, self.classes_to_labels)
+        self.data = make_img_dataset(self.root, self.extensions, self.classes_to_labels)
         self.data['label'] = torch.tensor(self.data['label'])
         self.classes_counts = make_classes_counts(self.data['label'],self.classes_size)        
         self.transform = transform

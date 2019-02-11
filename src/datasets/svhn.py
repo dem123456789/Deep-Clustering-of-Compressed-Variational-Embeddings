@@ -62,7 +62,9 @@ class SVHN(Dataset):
         # which expect the class labels to be in the range [0, C-1]
         np.place(self.labels, self.labels == 10, 0)
         self.data = np.transpose(self.data, (3, 2, 0, 1))
-
+        self.classes_size = 10
+        self.classes_to_labels = {self.classes[i]:i for i in range(len(self.classes))}
+        
     def __getitem__(self, index):
         img, label = self.data[index], torch.tensor(int(self.labels[index]))
         # doing this so that it is consistent with all other datasets

@@ -17,7 +17,14 @@ def PSNR(output,target,max=1.0):
     return psnr
     
 def BPP(code,img):
-    nbytes = code.numpy().nbytes
+    if(isinstance(code,np.ndarray)):
+        nbytes = code.nbytes
+    elif(isinstance(code,list)):
+        nbytes = 0 
+        for i in range(len(code)):
+            nbytes += code[i].nbytes
+    else:
+        raise ValueError('Code data type not supported')
     num_pixel = img.numel()/img.size(1)
     bpp = 8*nbytes/num_pixel
     return bpp
@@ -125,8 +132,8 @@ class Meter_Panel(object):
         fmt_str = ''
         if('loss' in names and 'loss' in self.panel):
             fmt_str += '\tLoss: {:.4f}'.format(self.panel['loss'].avg)
-        if('loss_base' in names and 'loss_base' in self.panel):
-            fmt_str += '\tLoss_base: {:.4f}'.format(self.panel['loss_base'].avg)
+        if('bpp' in names and 'bpp' in self.panel):
+            fmt_str += '\tBPP: {:.4f}'.format(self.panel['bpp'].avg)
         if('psnr' in names and 'psnr' in self.panel):
             fmt_str += '\tPSNR: {:.4f}'.format(self.panel['psnr'].avg)
         if('acc' in names and 'acc' in self.panel):
@@ -134,7 +141,7 @@ class Meter_Panel(object):
         if('cluster_acc' in names and 'cluster_acc' in self.panel):
             fmt_str += '\tACC: {:.4f}'.format(self.panel['cluster_acc'].val)
         if('batch_time' in names and 'batch_time' in self.panel):
-            fmt_str += '\tBatch Time: {:.4f}'.format(self.panel['batch_time'].sum)
+            fmt_str += '\tBatch Time: {:.4f}'.format(self.panel['batch_time'].avg)
         return fmt_str
                     
                 
@@ -194,7 +201,6 @@ class Metric(object):
         metric_names = protocol['metric_names']
         evaluation = {}
         evaluation['loss'] = output['loss'].item()
-        #evaluation['loss_base'] = output['loss_base'].item()
         if(tuning_param['compression'] > 0):
             if('psnr' in metric_names):
                 evaluation['psnr'] = PSNR(output['compression']['img'],input['img'])
