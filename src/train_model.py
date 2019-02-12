@@ -157,7 +157,7 @@ def init_param(train_loader,model,protocol):
             input = dict_to_device(input,device)
             protocol = update_protocol(input,i,len(train_loader),protocol)
             output = model(input,protocol)
-            z = output['compression']['code']
+            z = output['compression']['code'].view(input['img'].size(0),-1)
             Z = torch.cat((Z,z),0) if i > 0 else z
         if(protocol['init_param_mode'] == 'random'):
             C = torch.rand(Z.size(0), protocol['classes_size'],device=device)

@@ -90,7 +90,7 @@ class Joint_vade(nn.Module):
 		if(protocol['tuning_param']['classification'] > 0): 
 			q_c_z = output['classification']
 			loss = loss + (q_c_z*(q_c_z.log()-self.param['pi'].log())).sum(dim=1)
-			# loss = loss.sum()/input['img'].numel()
+			loss = loss.sum()/input['img'].numel()
 		return loss
 
 	def compression_loss_fn(self, input, output, protocol):
@@ -104,7 +104,7 @@ class Joint_vade(nn.Module):
 			loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
 				torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'], dim=1), dim=1)
 			loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
-		# loss = loss.sum()/input['img'].numel()
+		loss = loss.sum()/input['img'].numel()
 		return loss
 	
 	def loss_fn(self, input, output, protocol):

@@ -75,21 +75,6 @@ class Encoder(nn.Module):
 			x = self.encoder[i](x, protocol)
 		return x
 			   
-class NormalEmbedding(nn.Module):
-	def __init__(self):
-		super(NormalEmbedding, self).__init__()
-		self.conv_mean = nn.Conv2d(128, code_size, kernel_size=1, stride=1, padding=0, bias=False)
-		self.conv_logvar = nn.Conv2d(128, code_size, kernel_size=1, stride=1, padding=0, bias=False)
-		
-	def forward(self, input, protocol):
-		mu = self.conv_mean(input)
-		logvar = self.conv_logvar(input)
-		std = logvar.mul(0.5).exp()
-		eps = mu.new_zeros(mu.size()).normal_()
-		z = eps.mul(std).add_(mu)
-		param = {'mu':mu,'var':logvar.exp()}
-		return z, param
-
 class DecoderCell(nn.Module):
 	def __init__(self, decoder_cell_info):
 		super(DecoderCell, self).__init__()
@@ -139,13 +124,14 @@ class Decoder(nn.Module):
 		x = RGB_to_L(x) if (protocol['mode'] == 'L') else x
 		return x
 
-class Joint_cnn(nn.Module):
+class Joint_cnn_1(nn.Module):
 	def __init__(self,classes_size):
-		super(Joint_cnn, self).__init__()
+		super(Joint_cnn_1, self).__init__()
 		self.classes_size = classes_size
 		self.encoder = Encoder()
+		self.conv_mean = nn.Conv2d(128, code_size, kernel_size=1, stride=1, padding=0, bias=False)
+		self.conv_logvar = nn.Conv2d(128, code_size, kernel_size=1, stride=1, padding=0, bias=False)
 		self.decoder = Decoder()
-		self.embedding = NormalEmbedding()
 
 		self.param = nn.ParameterDict({
 			'mu': nn.Parameter(torch.zeros(z_dim, self.classes_size)),
@@ -195,7 +181,14 @@ class Joint_cnn(nn.Module):
 		input['param'] = self.param
 		img = (input['img'] - 0.5) * 2
 		encoded = self.encoder(img,protocol)
-		code, param = self.embedding(encoded,protocol)
+		mu = self.conv_mean(encoded)
+		logvar = self.conv_logvar(encoded)
+		
+		std = logvar.mul(0.5).exp()
+		eps = mu.new_zeros(mu.size()).normal_()
+		code = eps.mul(std).add_(mu)
+		param = {'mu':mu,'var':logvar.exp()}
+
 		output['compression'] = {'code':code, 'param':param}
 		
 		if(protocol['tuning_param']['compression'] > 0):
