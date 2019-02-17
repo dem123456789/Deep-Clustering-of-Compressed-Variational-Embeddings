@@ -130,7 +130,7 @@ def make_scheduler(scheduler_name,optimizer):
     if(scheduler_name=='MultiStepLR'):
         scheduler = MultiStepLR(optimizer,milestones=[10,20,50,100],gamma=factor)
     elif(scheduler_name=='ReduceLROnPlateau'):
-        scheduler = ReduceLROnPlateau(optimizer,mode='min',factor=factor,verbose=True,threshold=1e-4,threshold_mode='abs')
+        scheduler = ReduceLROnPlateau(optimizer,mode='min',factor=factor,verbose=True,threshold=1e-3,threshold_mode='abs')
     else:
         raise ValueError('Scheduler_name name not supported')
     return scheduler
@@ -176,7 +176,7 @@ def init_param(train_loader,model,protocol):
             from sklearn.mixture import GaussianMixture
             gm = GaussianMixture(n_components=protocol['classes_size'], covariance_type='diag', random_state=protocol['randomGen']).fit(Z.cpu().numpy())
             model.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
-            model.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
+            model.param['logvar'].copy_(torch.log(torch.tensor(gm.covariances_.T).float().to(device)))
         else:
             raise ValueError('Initialization method not supported')
     return
