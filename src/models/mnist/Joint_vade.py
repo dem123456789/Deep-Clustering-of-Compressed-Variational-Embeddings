@@ -34,14 +34,9 @@ class Joint_vade(nn.Module):
 
 		self.param = nn.ParameterDict({
 			'mu': nn.Parameter(torch.zeros(z_dim, self.classes_size)),
-			'var': nn.Parameter(torch.ones(z_dim, self.classes_size)),
+			'logvar': nn.Parameter(torch.ones(z_dim, self.classes_size)),
 			'pi': nn.Parameter(torch.ones(self.classes_size)/self.classes_size)
 			})
-
-	def create_gmmparam(self):
-		self.theta_p = nn.Parameter(torch.ones(self.classes_size)/self.classes_size) #requires_grad=True
-		self.mu_p = nn.Parameter(torch.zeros(z_dim, self.classes_size))
-		self.var_p = nn.Parameter(torch.ones(z_dim, self.classes_size))
 
 	def decode(self, input):
 		x = self.decoder(input)
@@ -50,8 +45,8 @@ class Joint_vade(nn.Module):
 
 	def classifier(self, input, protocol):		
 		z = input['code'].view(input['code'].size(0),-1,1)
-		q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*self.param['var']) +\
-			(z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-20
+		q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*torch.exp(self.param['logvar'])) +\
+			(z-self.param['mu'])**2/(2*torch.exp(self.param['logvar'])),dim=1)) + 1e-20
 		q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #Nx1		
 		return q_c_z
 
@@ -90,7 +85,7 @@ class Joint_vade(nn.Module):
 		if(protocol['tuning_param']['classification'] > 0): 
 			q_c_z = output['classification']
 			loss = loss + (q_c_z*(q_c_z.log()-self.param['pi'].log())).sum(dim=1)
-			loss = loss.sum()/input['img'].numel()
+			# loss = loss.sum()/input['img'].numel()
 		return loss
 
 	def compression_loss_fn(self, input, output, protocol):
@@ -101,10 +96,10 @@ class Joint_vade(nn.Module):
 		q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
 		if(protocol['tuning_param']['classification'] > 0):
 			q_c_z = output['classification']
-			loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
-				torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'], dim=1), dim=1)
+			loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+self.param['logvar']+\
+				torch.exp(q_logvar)/torch.exp(self.param['logvar']) + (q_mu-self.param['mu'])**2/torch.exp(self.param['logvar']), dim=1), dim=1)
 			loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
-		loss = loss.sum()/input['img'].numel()
+		# loss = loss.sum()/input['img'].numel()
 		return loss
 	
 	def loss_fn(self, input, output, protocol):
