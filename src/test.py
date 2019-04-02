@@ -1,15 +1,15 @@
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import numpy as np
-import math
-import config
-from modules import Quantize
-from functions import pixel_unshuffle
-from data import extract_patches_2d, reconstruct_from_patches_2d
-from utils import RGB_to_L, L_to_RGB,dict_to_device
-
-
+#import torch
+#import torch.nn as nn
+#import torch.nn.functional as F
+#import numpy as np
+#import math
+#import config
+#from modules import Quantize
+#from functions import pixel_unshuffle
+#from data import extract_patches_2d, reconstruct_from_patches_2d
+#from utils import RGB_to_L, L_to_RGB,dict_to_device
+#
+#
 # def collate(input):
 	# for k in input:
 		# input[k] = torch.stack(input[k],0)
@@ -109,11 +109,65 @@ from utils import RGB_to_L, L_to_RGB,dict_to_device
 	# # loss = loss.sum()/input['img'].numel()#input['img'].numel() = 102400
 	# return loss
 
+#def main():
+#    a = torch.randn(4, 4, 3)
+#    print(a)
+#    print(torch.sum(a, dim=2))
+#    print(torch.sum(a, dim=-1))
+#
+#if __name__ == "__main__":
+#    main()
+
+# import torch
+# import torch.nn as nn
+# from torch.nn import Parameter
+# import torch.nn.functional as F
+# import torch.optim as optim
+# import torchvision
+# from torchvision import datasets, transforms
+# from torch.autograd import Variable
+# from torchvision.utils import save_image
+
+# import numpy as np
+# import math
+# from sklearn.mixture import GaussianMixture
+# from sklearn.utils.linear_assignment_ import linear_assignment
+
+
+
+# def cluster_acc(Y_pred, Y):
+#     assert Y_pred.size == Y.size
+#     D = max(Y_pred.max(), Y.max())+1
+#     w = np.zeros((D,D), dtype=np.int64)
+#     for i in range(Y_pred.size):
+#         w[Y_pred[i], Y[i]] += 1
+#         ind = linear_assignment(w.max() - w)
+#     return sum([w[i,j] for i,j in ind])*1.0/Y_pred.size, w
+
+# def cluster_ACC(output,target,topk=1):
+#     with torch.no_grad():
+#         batch_size = target.size(0)
+#         pred_k = torch.argmax(output,dim=1)
+# #        pred_k = output.topk(topk, 1, True, True)[1]
+#         D = max(pred_k.max(), target.max()) + 1
+#         w = torch.zeros(D,D)
+#         for i in range(batch_size):
+#             w[pred_k[i], target[i]] += 1
+#         ind = linear_assignment(w.max() - w)
+#         correct_k = sum([w[i,j] for i,j in ind])
+#         cluster_acc = (correct_k*(100.0 / batch_size)).item()
+#     return cluster_acc
+
 # def main():
-# 	printed = True
-# 	checknan = True
-# 	if (checknan and not printed):
-# 		print(1)
+#     A = torch.rand(128,10)
+#     B = torch.LongTensor(128).random_(0, 9)
+#     A_pred = torch.argmax(A,dim=1)
+
+#     acc1 = cluster_acc(A_pred.numpy(),B.numpy())
+#     print(acc1)
+#     acc2 = cluster_ACC(A,B)
+#     print(acc2)
+#     print(torch.all(torch.eq(acc1,acc2)))
 
 # if __name__ == "__main__":
-# 	main()
+#     main()

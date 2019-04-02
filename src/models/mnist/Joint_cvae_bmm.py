@@ -78,6 +78,12 @@ class Joint_cvae_bmm(nn.Module):
 		x = torch.tanh(self.h0(x))
 		return x
 
+	def reparameterize(self, logits, temperature):
+		if self.training:
+			return gumbel_softmax(logits, temperature, hard=False)
+		else:
+			return gumbel_softmax(logits, temperature, hard=True)
+
 	def classifier(self, input, protocol):		
 		# z = torch.argmax(input['code'].view(input['code'].size(0),z_dim,z_category,1),dim=2) #NxDx2x1
 		# z = z.float().view(input['code'].size(0),z_dim,1)
@@ -109,7 +115,7 @@ class Joint_cvae_bmm(nn.Module):
 			loss = loss - torch.sum(q_c_z*torch.sum(q_y[:,:,1,:]*torch.log(input['param']['mean']*z_category)+q_y[:,:,0,:]*torch.log((1-input['param']['mean'])*z_category),dim=1),dim=1)
 			if (torch.isnan(loss).sum() and not config.PARAM['printed']):
 				print(torch.isnan(q_y[:,:,1,:]*torch.log(input['param']['mean'])).sum())
-			loss = loss + torch.sum(output['compression']['param']['qy']*torch.log(output['compression']['param']['qy']*z_category), 1)
+			loss = loss + torch.sum(output['compression']['param']['qy']*torch.log(output['compression']['param']['qy']*z_category+1e-10), 1)
 		# loss = loss.sum()/input['img'].numel()
 		return loss
 	
@@ -140,8 +146,8 @@ class Joint_cvae_bmm(nn.Module):
 		q = self.enc_q(h)
 		qy = q.view(q.size(0),z_dim,z_category)
 
-		code = gumbel_softmax(qy,self.temp)
-		param = {'qy':F.softmax(qy, dim=-1).reshape(*q.size())}
+		code = self.reparameterize(qy,self.temp)
+		param = {'qy':F.softmax(qy, dim=-1).reshape(*q.size())} #(p(z_k=0),p(z_k=1)) k=1,2,...,32
 
 		output['compression'] = {'code':code, 'param':param}
 

@@ -32,10 +32,6 @@ def Activation(activation,inplace=False):
         return nn.ELU()
     elif(activation=='selu'):
         return nn.SELU()
-    elif(activation=='celu'):
-        return nn.CELU()
-    elif(activation=='logsoftmax'):
-        return nn.SoftMax(dim=-1)
     else:
         raise ValueError('Activation mode not supported')
     return
@@ -118,15 +114,17 @@ class LSTMCell(nn.Module):
         self.cell_info['activation'] = _tuple(self.cell_info['activation'])
         cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(self.cell_info['num_layer'])])
         for i in range(self.cell_info['num_layer']):
-            cell_in_info = {**self.cell_info['in'][i],'output_size':4*self.cell_info['in'][i]['output_size']}
-            cell_hidden_info = {**self.cell_info['hidden'][i],'output_size':4*self.cell_info['hidden'][i]['output_size']}
+            cell_in_info = {**self.cell_info['in'],'output_size':4*self.cell_info['in']['output_size']}
+            if(i>0):
+                cell_in_info = {**cell_in_info,'input_size':self.cell_info['in']['output_size']}
+            cell_hidden_info = {**self.cell_info['hidden'],'output_size':4*self.cell_info['hidden']['output_size']}
             cell[i]['in'] = Cell(cell_in_info)
             cell[i]['hidden'] = Cell(cell_hidden_info)
             cell[i]['activation'] = nn.ModuleList([Activation(self.cell_info['activation'][0]),Activation(self.cell_info['activation'][1])])
         return cell
         
     def init_hidden(self, hidden_size):
-        hidden = [[torch.zeros(hidden_size,device=device)],[torch.zeros(hidden_size,device=device)]]
+        hidden = [torch.zeros(hidden_size,device=device),torch.zeros(hidden_size,device=device)]
         return hidden
     
     def free_hidden(self):
@@ -143,16 +141,13 @@ class LSTMCell(nn.Module):
                 gates = self.cell[i]['in'](x[:,j])
                 if(hidden is None):
                     if(self.hidden is None):
-                        self.hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
+                        self.hidden = self.init_hidden((gates.size(0),len(self.cell),self.cell_info['hidden']['output_size'],*gates.size()[2:]))
                     else:
-                        if(i==len(self.hidden[0])):
-                            tmp_hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
-                            self.hidden[0].extend(tmp_hidden[0])
-                            self.hidden[1].extend(tmp_hidden[1])
-                        else:
-                            pass
+                        pass
+                else:
+                    self.hidden = hidden
                 if(j==0):
-                    hx[i],cx[i] = self.hidden[0][i],self.hidden[1][i]
+                    hx[i],cx[i] = self.hidden[0][:,i],self.hidden[1][:,i]
                 gates += self.cell[i]['hidden'](hx[i])
                 ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
                 ingate = torch.sigmoid(ingate)
@@ -163,7 +158,7 @@ class LSTMCell(nn.Module):
                 hx[i] = outgate * self.cell[i]['activation'][1](cx[i])                
                 y[j] = hx[i]
             x = torch.stack(y,dim=1)
-        self.hidden = [hx,cx]
+        self.hidden[0],self.hidden[1] = torch.stack(hx,dim=1),torch.stack(cx,dim=1)
         x = x.squeeze(1) if(input.dim()==4) else x
         return x
 
@@ -179,18 +174,20 @@ class ResLSTMCell(nn.Module):
         self.cell_info['activation'] = _tuple(self.cell_info['activation'])
         cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(self.cell_info['num_layer'])])
         for i in range(self.cell_info['num_layer']):
+            cell_in_info = {**self.cell_info['in'],'output_size':4*self.cell_info['in']['output_size']}
             if(i==0):
-                cell_shortcut_info = self.cell_info['shortcut'][i]
+                cell_shortcut_info = self.cell_info['shortcut']
                 cell[i]['shortcut'] = Cell(cell_shortcut_info)
-            cell_in_info = {**self.cell_info['in'][i],'output_size':4*self.cell_info['in'][i]['output_size']}
-            cell_hidden_info = {**self.cell_info['hidden'][i],'output_size':4*self.cell_info['hidden'][i]['output_size']}
+            if(i>0):
+                cell_in_info = {**cell_in_info,'input_size':self.cell_info['in']['output_size']}
+            cell_hidden_info = {**self.cell_info['hidden'],'output_size':4*self.cell_info['hidden']['output_size']}
             cell[i]['in'] = Cell(cell_in_info)
             cell[i]['hidden'] = Cell(cell_hidden_info)            
             cell[i]['activation'] = nn.ModuleList([Activation(self.cell_info['activation'][0]),Activation(self.cell_info['activation'][1])])         
         return cell
         
     def init_hidden(self, hidden_size):
-        hidden = [[torch.zeros(hidden_size,device=device)],[torch.zeros(hidden_size,device=device)]]
+        hidden = [torch.zeros(hidden_size,device=device),torch.zeros(hidden_size,device=device)]
         return hidden
     
     def free_hidden(self):
@@ -210,18 +207,13 @@ class ResLSTMCell(nn.Module):
                 gates = self.cell[i]['in'](x[:,j])
                 if(hidden is None):
                     if(self.hidden is None):
-                        self.hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
+                        self.hidden = self.init_hidden((gates.size(0),len(self.cell),self.cell_info['hidden']['output_size'],*gates.size()[2:]))
                     else:
-                        if(i==len(self.hidden[0])):
-                            tmp_hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
-                            self.hidden[0].extend(tmp_hidden[0])
-                            self.hidden[1].extend(tmp_hidden[1])
-                        else:
-                            pass
+                        pass
                 else:
                     self.hidden = hidden
                 if(j==0):
-                    hx[i],cx[i] = self.hidden[0][i],self.hidden[1][i]
+                    hx[i],cx[i] = self.hidden[0][:,i],self.hidden[1][:,i]
                 gates += self.cell[i]['hidden'](hx[i])
                 ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
                 ingate = torch.sigmoid(ingate)
@@ -232,7 +224,7 @@ class ResLSTMCell(nn.Module):
                 hx[i] = outgate * self.cell[i]['activation'][1](cx[i]) if(i<len(self.cell)-1) else outgate * (shortcut[j] + self.cell[i]['activation'][1](cx[i]))
                 y[j] = hx[i]
             x = torch.stack(y,dim=1)
-        self.hidden = [hx,cx]
+        self.hidden[0],self.hidden[1] = torch.stack(hx,dim=1),torch.stack(cx,dim=1)
         x = x.squeeze(1) if(input.dim()==4) else x
         return x
         

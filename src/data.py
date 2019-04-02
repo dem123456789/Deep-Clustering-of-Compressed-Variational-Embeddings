@@ -43,7 +43,8 @@ def fetch_dataset(data_name):
             test_transform = transforms.Compose([transforms.Resize((32,32)),
                                             transforms.ToTensor()])           
         train_dataset.transform = train_transform
-        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=test_transform)
+        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=transforms.ToTensor())
+        test_dataset.transform = test_transform
 
     elif(data_name=='EMNIST' or data_name=='EMNIST_byclass' or data_name=='EMNIST_bymerge' or
         data_name=='EMNIST_balanced' or data_name=='EMNIST_letters' or data_name=='EMNIST_digits' or data_name=='EMNIST_mnist'):
@@ -268,8 +269,8 @@ def split_dataset(train_dataset,test_dataset,data_size,batch_size,radomGen,shuff
         else:
             batch_size[i] = batch_size[i]*world_size
     train_batch_size,test_batch_size = batch_size
-    train_dataset = torch.utils.data.Subset(train_dataset, data_idx)       
-    train_loader = torch.utils.data.DataLoader(dataset=train_dataset, 
+    train_dataset = torch.utils.data.Subset(train_dataset, data_idx)
+    train_loader = torch.utils.data.DataLoader(dataset=train_dataset,
                 shuffle=shuffle, batch_size=train_batch_size, pin_memory=True, sampler=None, num_workers=num_workers*world_size, collate_fn=collate_fn)    
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
                 batch_size=test_batch_size, pin_memory=True, num_workers=num_workers*world_size, collate_fn=collate_fn)

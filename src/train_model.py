@@ -11,6 +11,9 @@ from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau
 from data import *
 from utils import *
 from metrics import *
+from pprint import pprint
+from torch.utils.data import Dataset, DataLoader
+
 
 cudnn.benchmark = True
 temp_min = 0.5
@@ -36,10 +39,12 @@ def runExperiment(seed):
 	randomGen = np.random.RandomState(seed)
 	
 	train_dataset,_ = fetch_dataset(data_name=train_data_name)
+	# test_dataset = train_dataset
+	_,test_dataset = fetch_dataset(data_name=test_data_name)
 	validated_num_epochs = max_num_epochs
 	valid_data_size = len(train_dataset) if(data_size==0) else data_size
-	train_loader,test_loader = split_dataset(train_dataset,train_dataset,valid_data_size,batch_size=batch_size,radomGen=randomGen)
-	print('Training data size {}, Number of Batches {}, Test data size {}'.format(valid_data_size,len(train_loader),len(train_dataset)))      
+	train_loader,test_loader = split_dataset(train_dataset,test_dataset,valid_data_size,batch_size=batch_size,radomGen=np.random.RandomState(200),shuffle=True)
+	print('Training data size {}, Number of Batches {}, Test data size {}'.format(valid_data_size,len(train_loader),len(test_dataset)))
 	last_epoch = 0
 	model = eval('models.{}.{}(train_dataset.classes_size).to(device)'.format(model_dir,model_name))
 	param_protocol = init_param_protocol(train_dataset,randomGen)
@@ -154,10 +159,10 @@ def init_param_protocol(dataset,randomGen):
 	protocol['loss_mode'] = config.PARAM['loss_mode']
 	if(config.PARAM['balance']):
 		protocol['classes_counts'] = dataset.classes_counts.expand(world_size,-1).to(device)
-	protocol['init_param_mode'] = 'gmm'
+	protocol['init_param_mode'] = 'bmm'
 	protocol['classes_size'] = dataset.classes_size
 	protocol['randomGen'] = randomGen
-	protocol['tuning_param']['classification'] = 0
+	# protocol['tuning_param']['classification'] = 0
 	return protocol
 		
 def init_param(train_loader,model,protocol):
@@ -187,15 +192,18 @@ def init_param(train_loader,model,protocol):
 			from sklearn.mixture import GaussianMixture
 			gm = GaussianMixture(n_components=protocol['classes_size'], covariance_type='diag', random_state=protocol['randomGen']).fit(Z.cpu().numpy())
 			model.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
-			model.param['logvar'].copy_(torch.log(torch.tensor(gm.covariances_.T).float().to(device)))
+			model.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
 		elif(protocol['init_param_mode'] == 'bmm'):
 			from bmm_implement import BMM
-			Z = torch.argmax(Z.view(input['img'].size(0),32,2),dim=2)
+			# print(Z[1:10,:],Z.view(-1,32,2)[1:10,],Z.size())
+			Z = torch.argmax(Z.view(-1,32,2),dim=2)
+			# print(Z[1:10,:],Z.size())
 			bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
 			bmmq = torch.tensor(bmm.q).float().to(device)
-			# torch.log(bmmq/(1-bmmq))
+#            torch.log(bmmq/(1-bmmq))
 			# qt = torch.t(torch.tensor(bmm.q).float().to(device))
-			model.param['mean'].copy_(torch.log(bmmq/(1-bmmq))) #p(z=1|c=k)
+			model.param['mean'].copy_(torch.log(bmmq/(1-bmmq))) #p(z=1|c=k)#32x10
+			# model.param['mean'].copy_(bmmq)
 		else:
 			raise ValueError('Initialization method not supported')
 	return

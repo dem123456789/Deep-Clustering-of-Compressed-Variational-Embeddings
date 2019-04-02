@@ -51,6 +51,7 @@ def ACC(output,target,topk=1):
 def cluster_ACC(output,target,topk=1):
     with torch.no_grad():
         batch_size = target.size(0)
+#        pred_k = torch.argmax(output,dim=1)
         pred_k = output.topk(topk, 1, True, True)[1]
         D = max(pred_k.max(), target.max()) + 1
         w = torch.zeros(D,D)    

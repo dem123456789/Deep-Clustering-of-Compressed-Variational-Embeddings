@@ -5,6 +5,7 @@ import numpy as np
 import math
 import config
 from modules import Quantize
+from torch.autograd import Variable
 from functions import pixel_unshuffle
 from data import extract_patches_2d, reconstruct_from_patches_2d
 from utils import RGB_to_L, L_to_RGB,dict_to_device
@@ -22,32 +23,49 @@ def buildNetwork(layers):
 	return nn.Sequential(*net)
 
 class Joint_vade(nn.Module):
-	def __init__(self,classes_size):
+	def __init__(self,classes_size,binary=True):
 		super(Joint_vade, self).__init__()
 		self.classes_size = classes_size
-		self.encoder = buildNetwork([1024,500,500,2000])
-		self.enc_mean = nn.Linear(2000, z_dim)
-		self.enc_logvar = nn.Linear(2000, z_dim)
+		self.encoder = buildNetwork([1024]+[500,500,2000])
+		self.decoder = buildNetwork([z_dim]+[2000,500,500])
+		self.enc_mean = nn.Linear([500,500,2000][-1], z_dim)
+		self.enc_logvar = nn.Linear([500,500,2000][-1], z_dim)
+		self._dec_act = None
+		if binary:
+			self._dec_act = nn.Sigmoid()
 
-		self.decoder = buildNetwork([z_dim,2000,500,500])
 		self.h0 = nn.Linear(500,1024)
 
 		self.param = nn.ParameterDict({
 			'mu': nn.Parameter(torch.zeros(z_dim, self.classes_size)),
-			'logvar': nn.Parameter(torch.ones(z_dim, self.classes_size)),
+			'var': nn.Parameter(torch.ones(z_dim, self.classes_size)),
 			'pi': nn.Parameter(torch.ones(self.classes_size)/self.classes_size)
 			})
 
-	def decode(self, input):
-		x = self.decoder(input)
-		x = torch.sigmoid(self.h0(x))
-		return x
+	def reparameterize(self, mu, logvar):
+		if self.training:
+			std = logvar.mul(0.5).exp_()
+			eps = Variable(std.data.new(std.size()).normal_())
+			  # num = np.array([[ 1.096506  ,  0.3686553 , -0.43172026,  1.27677995,  1.26733758,
+			  #       1.30626082,  0.14179629,  0.58619505, -0.76423112,  2.67965817]], dtype=np.float32)
+			  # num = np.repeat(num, mu.size()[0], axis=0)
+			  # eps = Variable(torch.from_numpy(num))
+			return eps.mul(std).add_(mu)
+		else:
+			return mu
 
+	def decode(self, input):
+		h = self.decoder(input)
+		x = self.h0(h)
+		if self._dec_act is not None:
+			x = self._dec_act(x)
+		return x
+	
 	def classifier(self, input, protocol):		
 		z = input['code'].view(input['code'].size(0),-1,1)
-		q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*torch.exp(self.param['logvar'])) +\
-			(z-self.param['mu'])**2/(2*torch.exp(self.param['logvar'])),dim=1)) + 1e-20
-		q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #Nx1		
+		q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*self.param['var']) +\
+			(z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-10
+		q_c_z = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True) #Nx1		
 		return q_c_z
 
 	def loss_fn_base(self, input, output, protocol):
@@ -84,7 +102,7 @@ class Joint_vade(nn.Module):
 		loss = 0
 		if(protocol['tuning_param']['classification'] > 0): 
 			q_c_z = output['classification']
-			loss = loss + (q_c_z*(q_c_z.log()-self.param['pi'].log())).sum(dim=1)
+			loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(self.param['pi'])),1)
 			# loss = loss.sum()/input['img'].numel()
 		return loss
 
@@ -96,8 +114,8 @@ class Joint_vade(nn.Module):
 		q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
 		if(protocol['tuning_param']['classification'] > 0):
 			q_c_z = output['classification']
-			loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+self.param['logvar']+\
-				torch.exp(q_logvar)/torch.exp(self.param['logvar']) + (q_mu-self.param['mu'])**2/torch.exp(self.param['logvar']), dim=1), dim=1)
+			loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torc.log(self.param['var'])+\
+				torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'], dim=1), dim=1)
 			loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
 		# loss = loss.sum()/input['img'].numel()
 		return loss
@@ -112,19 +130,19 @@ class Joint_vade(nn.Module):
 	def forward(self, input, protocol):
 		output = {}
 		
-		img = input['img'].view(-1,1024)
+		img = input['img'].view(-1,1024).float()
 		h = self.encoder(img)
 		mu = self.enc_mean(h)
 		logvar = self.enc_logvar(h)
-
-		std = logvar.mul(0.5).exp_()
-		eps = mu.new_zeros(mu.size()).normal_()
-		code = eps.mul(std).add_(mu)
+		code = self.reparameterize(mu,logvar)
 		param = {'mu':mu,'logvar':logvar}
 
 		output['compression'] = {'code':code, 'param':param}
 
 		compression_output = self.decode(code)
+		# for name, param in self.decoder.named_parameters():
+		# 	if param.requires_grad:
+		# 		print(name, param.data,param.grad)
 		output['compression']['img'] = compression_output.view(input['img'].size())
 		
 		if(protocol['tuning_param']['classification'] > 0):
