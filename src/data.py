@@ -13,14 +13,14 @@ from torch.utils.data.distributed import DistributedSampler
 from utils import *
 
 
-config.init()
+             
 
 seed = 1234
 if_dist = False
 world_size = config.PARAM['world_size']
 num_workers = config.PARAM['num_workers']
 normalize = config.PARAM['normalize']
-branch = config.PARAM['branch']
+                               
 device = config.PARAM['device']
 
 def fetch_dataset(data_name):
@@ -43,9 +43,8 @@ def fetch_dataset(data_name):
             test_transform = transforms.Compose([transforms.Resize((32,32)),
                                             transforms.ToTensor()])           
         train_dataset.transform = train_transform
-        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=transforms.ToTensor())
-        test_dataset.transform = test_transform
-
+        test_dataset = datasets.MNIST(root=test_dir, train=False, download=True, transform=test_transform)
+                                               
     elif(data_name=='EMNIST' or data_name=='EMNIST_byclass' or data_name=='EMNIST_bymerge' or
         data_name=='EMNIST_balanced' or data_name=='EMNIST_letters' or data_name=='EMNIST_digits' or data_name=='EMNIST_mnist'):
         train_dir = './data/{}/train'.format(data_name.split('_')[0])
@@ -234,6 +233,8 @@ def fetch_dataset(data_name):
         train_dataset = None
         transform = transforms.Compose([transforms.ToTensor()])
         test_dir = './data/{}'.format(data_name)
+        train_dataset = datasets.ImageFolder(
+            test_dir, transform)
         test_dataset = datasets.ImageFolder(
             test_dir, transform)
             
@@ -241,6 +242,8 @@ def fetch_dataset(data_name):
         train_dataset = None
         transform = transforms.Compose([transforms.ToTensor()])
         test_dir = './data/{}'.format(data_name)
+        train_dataset = datasets.ImageFolder(
+            test_dir, transform)
         test_dataset = datasets.ImageFolder(
             test_dir, transform)
     else:

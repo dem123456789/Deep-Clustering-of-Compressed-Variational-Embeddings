@@ -1,11 +1,11 @@
-import torch.nn as nn
-import torch.nn.functional as F
 import torch
 import config
+import torch.nn as nn
+import torch.nn.functional as F
 from collections import OrderedDict 
 from utils import _ntuple,apply_along_dim
+from modules.shuffle import PixelUnShuffle,PixelShuffle
 
-config.init()
 device = config.PARAM['device']
 
 def Normalization(normalization,output_size):
@@ -32,6 +32,10 @@ def Activation(activation,inplace=False):
         return nn.ELU()
     elif(activation=='selu'):
         return nn.SELU()
+    elif(activation=='celu'):
+        return nn.CELU()
+    elif(activation=='logsoftmax'):
+        return nn.SoftMax(dim=-1)
     else:
         raise ValueError('Activation mode not supported')
     return
@@ -66,7 +70,7 @@ class BasicCell(nn.Module):
             if(i>0):
                 cell_info = {**cell_info,'cell':'Conv2d','input_size':self.cell_info['output_size'],'kernel_size':3,'stride':1,'padding':1}
             if(i==self.cell_info['num_layer']-1 and self.cell_info['raw']):
-                cell_info = {**cell_info,'normalization':'none','activation':'none'}
+                cell_info = {**cell_info,'activation':'none'}
             cell.append(Cell(cell_info))
         return cell
         
@@ -87,19 +91,23 @@ class ResCell(nn.Module):
         self.cell = self.make_cell()
         
     def make_cell(self):
-        cell = nn.ModuleDict({})
-        cell['in'] = nn.Sequential(*[Cell(self.cell_info['in'][i]) for i in range(len(self.cell_info['in']))])
-        cell['shortcut'] = Cell(self.cell_info['shortcut'])
-        cell['activation'] = Activation(self.cell_info['activation']) if(not self.cell_info['raw']) else Activation('none')
-        if('normalization' in self.cell_info):
-            cell['normalization'] = Normalization(self.cell_info['normalization'],self.cell_info['in'][-1]['output_size'])
+        cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(self.cell_info['num_layer'])])
+        for i in range(self.cell_info['num_layer']):
+            if(i==0):
+                cell[i]['shortcut'] = Cell(self.cell_info['shortcut'][i])
+            cell[i]['in'] = Cell(self.cell_info['in'][i])
+            if(i==self.cell_info['num_layer']-1):
+                cell[i]['activation'] = Activation(self.cell_info['activation'])
         return cell
         
     def forward(self, input):
         x = input
-        x = self.cell['in'](x)
-        x += self.cell['shortcut'](input)
-        x = self.cell['activation'](x)
+        for i in range(len(self.cell)):
+            if(i==0):
+                shortcut = self.cell[i]['shortcut'](x)
+            x = self.cell[i]['in'](x)
+            if(i==len(self.cell)-1):
+                x = self.cell[i]['activation'](x+shortcut)
         return x
         
 class LSTMCell(nn.Module):
@@ -114,17 +122,15 @@ class LSTMCell(nn.Module):
         self.cell_info['activation'] = _tuple(self.cell_info['activation'])
         cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(self.cell_info['num_layer'])])
         for i in range(self.cell_info['num_layer']):
-            cell_in_info = {**self.cell_info['in'],'output_size':4*self.cell_info['in']['output_size']}
-            if(i>0):
-                cell_in_info = {**cell_in_info,'input_size':self.cell_info['in']['output_size']}
-            cell_hidden_info = {**self.cell_info['hidden'],'output_size':4*self.cell_info['hidden']['output_size']}
+            cell_in_info = {**self.cell_info['in'][i],'output_size':4*self.cell_info['in'][i]['output_size']}
+            cell_hidden_info = {**self.cell_info['hidden'][i],'output_size':4*self.cell_info['hidden'][i]['output_size']}
             cell[i]['in'] = Cell(cell_in_info)
             cell[i]['hidden'] = Cell(cell_hidden_info)
             cell[i]['activation'] = nn.ModuleList([Activation(self.cell_info['activation'][0]),Activation(self.cell_info['activation'][1])])
         return cell
         
     def init_hidden(self, hidden_size):
-        hidden = [torch.zeros(hidden_size,device=device),torch.zeros(hidden_size,device=device)]
+        hidden = [[torch.zeros(hidden_size,device=device)],[torch.zeros(hidden_size,device=device)]]
         return hidden
     
     def free_hidden(self):
@@ -141,13 +147,16 @@ class LSTMCell(nn.Module):
                 gates = self.cell[i]['in'](x[:,j])
                 if(hidden is None):
                     if(self.hidden is None):
-                        self.hidden = self.init_hidden((gates.size(0),len(self.cell),self.cell_info['hidden']['output_size'],*gates.size()[2:]))
+                        self.hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
                     else:
-                        pass
-                else:
-                    self.hidden = hidden
+                        if(i==len(self.hidden[0])):
+                            tmp_hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
+                            self.hidden[0].extend(tmp_hidden[0])
+                            self.hidden[1].extend(tmp_hidden[1])
+                        else:
+                            pass
                 if(j==0):
-                    hx[i],cx[i] = self.hidden[0][:,i],self.hidden[1][:,i]
+                    hx[i],cx[i] = self.hidden[0][i],self.hidden[1][i]
                 gates += self.cell[i]['hidden'](hx[i])
                 ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
                 ingate = torch.sigmoid(ingate)
@@ -158,7 +167,7 @@ class LSTMCell(nn.Module):
                 hx[i] = outgate * self.cell[i]['activation'][1](cx[i])                
                 y[j] = hx[i]
             x = torch.stack(y,dim=1)
-        self.hidden[0],self.hidden[1] = torch.stack(hx,dim=1),torch.stack(cx,dim=1)
+        self.hidden = [hx,cx]
         x = x.squeeze(1) if(input.dim()==4) else x
         return x
 
@@ -174,20 +183,18 @@ class ResLSTMCell(nn.Module):
         self.cell_info['activation'] = _tuple(self.cell_info['activation'])
         cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(self.cell_info['num_layer'])])
         for i in range(self.cell_info['num_layer']):
-            cell_in_info = {**self.cell_info['in'],'output_size':4*self.cell_info['in']['output_size']}
             if(i==0):
-                cell_shortcut_info = self.cell_info['shortcut']
+                cell_shortcut_info = self.cell_info['shortcut'][i]
                 cell[i]['shortcut'] = Cell(cell_shortcut_info)
-            if(i>0):
-                cell_in_info = {**cell_in_info,'input_size':self.cell_info['in']['output_size']}
-            cell_hidden_info = {**self.cell_info['hidden'],'output_size':4*self.cell_info['hidden']['output_size']}
+            cell_in_info = {**self.cell_info['in'][i],'output_size':4*self.cell_info['in'][i]['output_size']}
+            cell_hidden_info = {**self.cell_info['hidden'][i],'output_size':4*self.cell_info['hidden'][i]['output_size']}
             cell[i]['in'] = Cell(cell_in_info)
             cell[i]['hidden'] = Cell(cell_hidden_info)            
             cell[i]['activation'] = nn.ModuleList([Activation(self.cell_info['activation'][0]),Activation(self.cell_info['activation'][1])])         
         return cell
         
     def init_hidden(self, hidden_size):
-        hidden = [torch.zeros(hidden_size,device=device),torch.zeros(hidden_size,device=device)]
+        hidden = [[torch.zeros(hidden_size,device=device)],[torch.zeros(hidden_size,device=device)]]
         return hidden
     
     def free_hidden(self):
@@ -207,13 +214,18 @@ class ResLSTMCell(nn.Module):
                 gates = self.cell[i]['in'](x[:,j])
                 if(hidden is None):
                     if(self.hidden is None):
-                        self.hidden = self.init_hidden((gates.size(0),len(self.cell),self.cell_info['hidden']['output_size'],*gates.size()[2:]))
+                        self.hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
                     else:
-                        pass
+                        if(i==len(self.hidden[0])):
+                            tmp_hidden = self.init_hidden((gates.size(0),self.cell_info['hidden'][i]['output_size'],*gates.size()[2:]))
+                            self.hidden[0].extend(tmp_hidden[0])
+                            self.hidden[1].extend(tmp_hidden[1])
+                        else:
+                            pass
                 else:
                     self.hidden = hidden
                 if(j==0):
-                    hx[i],cx[i] = self.hidden[0][:,i],self.hidden[1][:,i]
+                    hx[i],cx[i] = self.hidden[0][i],self.hidden[1][i]
                 gates += self.cell[i]['hidden'](hx[i])
                 ingate, forgetgate, cellgate, outgate = gates.chunk(4, 1)
                 ingate = torch.sigmoid(ingate)
@@ -221,11 +233,45 @@ class ResLSTMCell(nn.Module):
                 cellgate = self.cell[i]['activation'][0](cellgate)
                 outgate = torch.sigmoid(outgate)
                 cx[i] = (forgetgate * cx[i]) + (ingate * cellgate)  
-                hx[i] = outgate * self.cell[i]['activation'][1](cx[i]) if(i<len(self.cell)-1) else outgate * (shortcut[j] + self.cell[i]['activation'][1](cx[i]))
+                hx[i] = outgate * self.cell[i]['activation'][1](cx[i]) if(i<len(self.cell)-1) else outgate*(shortcut[j] + self.cell[i]['activation'][1](cx[i]))
                 y[j] = hx[i]
             x = torch.stack(y,dim=1)
-        self.hidden[0],self.hidden[1] = torch.stack(hx,dim=1),torch.stack(cx,dim=1)
+        self.hidden = [hx,cx]
         x = x.squeeze(1) if(input.dim()==4) else x
+        return x
+
+class ShuffleCell(nn.Module):
+    def __init__(self, cell_info):
+        super(ShuffleCell, self).__init__()
+        self.cell_info = cell_info
+        self.cell = self.make_cell()
+        
+    def make_cell(self):
+        if(self.cell_info['mode'] == 'down'):        
+            cell = PixelUnShuffle(self.cell_info['scale_factor'])
+        elif(self.cell_info['mode'] == 'up'):        
+            cell = PixelShuffle(self.cell_info['scale_factor'])
+        return cell
+        
+    def forward(self, input):
+        x = self.cell(input)
+        return x
+
+class PoolCell(nn.Module):
+    def __init__(self, cell_info):
+        super(PoolCell, self).__init__()
+        self.cell_info = cell_info
+        self.cell = self.make_cell()
+        
+    def make_cell(self):
+        if(self.cell_info['mode'] == 'avg'):        
+            cell = nn.AdaptiveAvgPool2d(self.cell_info['output_size'])
+        elif(self.cell_info['mode'] == 'max'):        
+            cell = nn.AdaptiveMaxPool2d(self.cell_info['output_size'])
+        return cell
+        
+    def forward(self, input):
+        x = self.cell(input)
         return x
         
 class Cell(nn.Module):
@@ -277,6 +323,10 @@ class Cell(nn.Module):
             default_cell_info = {'activation':'tanh'}
             self.cell_info = {**default_cell_info,**self.cell_info}
             cell = ResLSTMCell(self.cell_info)
+        elif(self.cell_info['cell'] == 'ShuffleCell'):
+            cell = ShuffleCell(self.cell_info)
+        elif(self.cell_info['cell'] == 'PoolCell'):
+            cell = PoolCell(self.cell_info)              
         else:
             raise ValueError('parse model mode not supported')
         return cell

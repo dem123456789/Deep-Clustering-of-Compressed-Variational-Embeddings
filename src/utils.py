@@ -17,13 +17,14 @@ from torchvision.utils import save_image
 from torch.optim.lr_scheduler import _LRScheduler, MultiStepLR, ReduceLROnPlateau
 
 def makedir_exist_ok(dirpath):
-	try:
-		os.makedirs(dirpath)
-	except OSError as e:
-		if e.errno == errno.EEXIST:
-			pass
-		else:
-			raise
+    try:
+        os.makedirs(dirpath)
+    except OSError as e:
+        if e.errno == errno.EEXIST:
+            pass
+        else:
+            raise
+    return
 			
 def save(input,dir,protocol = 2,mode='torch'):
 	dirname = os.path.dirname(dir)
