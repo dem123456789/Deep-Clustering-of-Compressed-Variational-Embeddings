@@ -5,6 +5,7 @@ import numpy as np
 import math
 import config
 from modules import Cell
+from utils import RGB_to_L, L_to_RGB
 
 device = config.PARAM['device']
 
@@ -16,10 +17,14 @@ class Encoder(nn.Module):
         
     def make_encoder_info(self):
         encoder_info = [
-        {'input_size':1024,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},        
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},       
+        {'input_size':3,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'down','scale_factor':2},         
+        {'input_size':512,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'down','scale_factor':2},
+        {'input_size':512,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'down','scale_factor':2},
+        {'input_size':512,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'input_size':128,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'tanh','raw':False}        
         ]
         return encoder_info
         
@@ -30,7 +35,7 @@ class Encoder(nn.Module):
         return encoder
             
     def forward(self, input, protocol):
-        x = input.view(input.size(0),-1,1,1)
+        x = L_to_RGB(input) if (protocol['mode'] == 'L') else input
         for i in range(len(self.encoder)):
             x = self.encoder[i](x)
         return x
@@ -43,11 +48,14 @@ class Decoder(nn.Module):
         
     def make_decoder_info(self):
         decoder_info = [
-        {'input_size':config.PARAM['code_size'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':1024,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'sigmoid','raw':False}, 
+        {'input_size':128,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},      
+        {'input_size':128,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'up','scale_factor':2},
+        {'input_size':128,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'up','scale_factor':2},
+        {'input_size':128,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'cell':'ShuffleCell','mode':'up','scale_factor':2},
+        {'input_size':128,'output_size':3,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'tanh','raw':False},        
         ]
         return decoder_info
 
@@ -57,20 +65,21 @@ class Decoder(nn.Module):
             decoder.append(Cell(self.decoder_info[i]))
         return decoder
         
-    def forward(self, input, protocol):
-        x = input
+    def forward(self, input, protocol):       
         for i in range(len(self.decoder)):
             x = self.decoder[i](x)
+        x = RGB_to_L(x) if (protocol['mode'] == 'L') else x
         return x
 
-class vade(nn.Module):
+class cvae(nn.Module):
     def __init__(self,classes_size):
-        super(vade, self).__init__()
+        super(cvae, self).__init__()
         self.classes_size = classes_size
         self.encoder = Encoder()
         self.decoder = Decoder()
-        self.encoder_mean = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
-        self.encoder_logvar = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.encoder_mean = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.encoder_logvar = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.decoder_in = Cell({'input_size':config.PARAM['code_size'],'output_size':2048,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
         self.param = nn.ParameterDict({
             'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], self.classes_size)),
             'var': nn.Parameter(torch.ones(config.PARAM['code_size'], self.classes_size)),
@@ -91,7 +100,7 @@ class vade(nn.Module):
             (z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-10
         q_c_z = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)       
         return q_c_z
-
+        
     def classification_loss_fn(self, input, output, protocol):
         loss = torch.tensor(0,device=device,dtype=torch.float32)
         if(protocol['tuning_param']['classification'] > 0): 
@@ -122,15 +131,18 @@ class vade(nn.Module):
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
             'classification':torch.tensor(0,device=device,dtype=torch.float32)}
         
-        img = input['img'].view(-1,1024).float()
+        img = (input['img']-0.5)*2
         encoded = self.encoder(img,protocol)
-        mu = self.encoder_mean(encoded)
-        logvar = self.encoder_logvar(encoded)
+        flattened_encoded = encoded.view(input.size(0),-1)
+        mu = self.encoder_mean(flattened_encoded)
+        logvar = self.encoder_logvar(flattened_encoded)
         output['compression']['code'] = self.reparameterize(mu,logvar)
         output['compression']['param'] = {'mu':mu,'logvar':logvar}
-        
+
         if(protocol['tuning_param']['compression'] > 0):
-            compression_output = self.decoder(output['compression']['code'],protocol)
+            unflattened_code = output['compression']['code'].view(encoded.size())
+            compression_output = self.decoder(unflattened_code,protocol)
+            compression_output = (compression_output+1)*0.5
             output['compression']['img'] = compression_output.view(input['img'].size())
         
         if(protocol['tuning_param']['classification'] > 0):
@@ -140,3 +152,4 @@ class vade(nn.Module):
         output['loss'] = self.loss_fn(input,output,protocol)
 
         return output
+        
