@@ -84,12 +84,7 @@ def collate(input):
         input[k] = torch.stack(input[k],0)
     return input
 
-def update_test_protocol(input,iter,i,num_batch,protocol):
-    protocol['num_iter'] = iter
-    if(i == num_batch-1):
-        protocol['activate_full'] = True
-    else:
-        protocol['activate_full'] = False
+def update_test_protocol(input,protocol):
     if(input['img'].size(1)==1):
         protocol['img_mode'] = 'L'
     elif(input['img'].size(1)==3):
