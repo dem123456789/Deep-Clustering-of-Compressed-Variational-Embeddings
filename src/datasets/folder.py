@@ -17,13 +17,12 @@ class DatasetFolder(Dataset):
             self.classes, self.classes_to_labels = self._find_classes(self.root)
             self.classes_size = len(self.classes_to_labels.keys())
             self.output_names = ['img','label']
+            self.classes_counts = make_classes_counts(self.data['label'],self.classes_size)
         else:
             self.classes_to_labels = None
             self.classes_size = 0
             self.output_names = ['img']
-        self.data = make_img_dataset(self.root, self.extensions, self.classes_to_labels)
-        self.data['label'] = torch.tensor(self.data['label'])
-        self.classes_counts = make_classes_counts(self.data['label'],self.classes_size)        
+        self.data = make_img_dataset(self.root, self.extensions, self.classes_to_labels)       
         self.transform = transform
 
     def _find_classes(self, dir):
@@ -43,7 +42,7 @@ class DatasetFolder(Dataset):
                 img = self.loader(path)
                 input['img'] = img
             elif(k == 'label'):
-                input['label'] = self.data['label'][index]
+                input['label'] = torch.tensor(self.data['label'][index])
         if self.transform is not None:
             input = self.transform(input)            
         return input

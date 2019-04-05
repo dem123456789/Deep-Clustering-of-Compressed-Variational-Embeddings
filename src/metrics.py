@@ -9,6 +9,7 @@ from sklearn.metrics import *
 from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.metrics import roc_curve, auc
 from utils import dict_to_device
+
 device = config.PARAM['device']
 
 def SSIM(output, target, window_size=11, MAX=1, window=None, full=False):
@@ -255,7 +256,7 @@ class Meter_Panel(object):
         if('acc' in names and 'acc' in self.panel):
             fmt_str += '\tACC: {:.4f}'.format(self.panel['acc'].avg)
         if('cluster_acc' in names and 'cluster_acc' in self.panel):
-            fmt_str += '\tACC: {:.4f}'.format(self.panel['cluster_acc'].val)
+            fmt_str += '\tClustering_ACC: {:.4f}'.format(self.panel['cluster_acc'].val)
         if('roc' in names and 'roc' in self.panel):
             fmt_str += '\tROC: {}'.format(self.panel['roc'].val['roc_auc'])
         if('batch_time' in names and 'batch_time' in self.panel):

@@ -34,6 +34,8 @@ def Activation(activation,inplace=False):
         return nn.SELU()
     elif(activation=='celu'):
         return nn.CELU()
+    elif(activation=='sigmoid'):
+        return nn.Sigmoid()
     elif(activation=='logsoftmax'):
         return nn.SoftMax(dim=-1)
     else:

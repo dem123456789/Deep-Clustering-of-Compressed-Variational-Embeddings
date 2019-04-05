@@ -12,15 +12,11 @@ from torch.utils.data.sampler import SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
 from utils import *
 
-
-             
-
 seed = 1234
 if_dist = False
 world_size = config.PARAM['world_size']
 num_workers = config.PARAM['num_workers']
-normalize = config.PARAM['normalize']
-                               
+normalize = config.PARAM['normalize']                               
 device = config.PARAM['device']
 
 def fetch_dataset(data_name):
