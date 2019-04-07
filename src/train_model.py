@@ -99,8 +99,6 @@ def train(train_loader,model,optimizer,epoch,protocol):
         optimizer.zero_grad()
         output['loss'].backward()
         optimizer.step()
-        if (config.PARAM['tuning_param']=='Joint_cvae_bmm' and i % 100) == 1:
-            model.temp = np.maximum(model.temp * np.exp(-ANNEAL_RATE * i), temp_min)
         evaluation = meter_panel.eval(input,output,protocol)
         batch_time = time.time() - end
         meter_panel.update(evaluation,input['img'].size(0))
@@ -123,8 +121,6 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
             protocol = update_test_protocol(input,i,len(validation_loader),protocol)
             output = model(input,protocol)
             output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
-            if (config.PARAM['tuning_param']=='Joint_cvae_bmm' and i % 100) == 1:
-                model.temp = np.maximum(model.temp * np.exp(-ANNEAL_RATE * i), temp_min)
             evaluation = meter_panel.eval(input,output,protocol)
             batch_time = time.time() - end
             meter_panel.update(evaluation,len(input['img']))
@@ -162,6 +158,7 @@ def init_param_protocol(dataset,randomGen):
     protocol['init_param_mode'] = config.PARAM['init_param_mode']
     protocol['classes_size'] = dataset.classes_size
     protocol['randomGen'] = randomGen
+    protocol['temperature'] = config.PARAM['temperature']
     return protocol
         
 def init_param(train_loader,model,protocol):
@@ -207,6 +204,7 @@ def init_train_protocol(dataset):
     protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
     protocol['metric_names'] = config.PARAM['train_metric_names'].copy()
     protocol['loss_mode'] = config.PARAM['loss_mode']
+    protocol['temperature'] = config.PARAM['temperature']
     return protocol 
 
 def init_test_protocol(dataset):
@@ -214,6 +212,7 @@ def init_test_protocol(dataset):
     protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
     protocol['metric_names'] = config.PARAM['test_metric_names'].copy()
     protocol['loss_mode'] = config.PARAM['loss_mode']
+    protocol['temperature'] = config.PARAM['temperature']
     return protocol
     
 def collate(input):
@@ -222,11 +221,12 @@ def collate(input):
     return input
 
 def update_train_protocol(input,i,num_batch,protocol):
-    protocol['num_iter'] = config.PARAM['num_iter']
     if(i == num_batch-1 or i % (num_batch//5) == 0):
         protocol['activate_full'] = True
     else:
         protocol['activate_full'] = False
+    if(i % 100) == 1:
+        protocol['temperature'] = np.maximum(protocol['temperature']*np.exp(-config.PARAM['annealing_rate']*i),config.PARAM['min_temperature'])
     if(input['img'].size(1)==1):
         protocol['img_mode'] = 'L'
     elif(input['img'].size(1)==3):
@@ -236,11 +236,12 @@ def update_train_protocol(input,i,num_batch,protocol):
     return protocol
     
 def update_test_protocol(input,i,num_batch,protocol):
-    protocol['num_iter'] = config.PARAM['num_iter']
     if(i == num_batch-1):
         protocol['activate_full'] = True
     else:
         protocol['activate_full'] = False
+    if(i % 100) == 1:
+        protocol['temperature'] = np.maximum(protocol['temperature']*np.exp(-config.PARAM['annealing_rate']*i),config.PARAM['min_temperature'])
     if(input['img'].size(1)==1):
         protocol['img_mode'] = 'L'
     elif(input['img'].size(1)==3):

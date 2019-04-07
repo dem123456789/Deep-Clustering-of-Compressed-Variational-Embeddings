@@ -5,8 +5,30 @@ import numpy as np
 import math
 import config
 from modules import Cell
+from bmm_implement import BMM
 
 device = config.PARAM['device']
+
+def sample_gumbel(shape, eps=1e-20):
+    U = torch.rand(shape,device=device)
+    return -torch.log(-torch.log(U+eps)+eps)
+
+def gumbel_softmax_sample(logits, temperature):
+    y = logits+sample_gumbel(logits.size())
+    return F.softmax(y/temperature,dim=-1)
+
+def gumbel_softmax(logits, temperature, hard=False):
+    y = gumbel_softmax_sample(logits,temperature)   
+    if not hard:
+        return y.view(-1,config.PARAM['code_size']*config.PARAM['num_level'],1,1)
+    shape = y.size()
+    _, ind = y.max(dim=-1)
+    y_hard = torch.zeros_like(y).view(-1,shape[-1])
+    y_hard.scatter_(1,ind.view(-1,1),1)
+    y_hard = y_hard.view(*shape)
+    y_hard = (y_hard-y).detach()+y
+    y_hard = y_hard.view(-1,config.PARAM['code_size']*config.PARAM['num_level'],1,1)
+    return y_hard
 
 class Encoder(nn.Module):
     def __init__(self):
@@ -43,7 +65,7 @@ class Decoder(nn.Module):
         
     def make_decoder_info(self):
         decoder_info = [
-        {'input_size':config.PARAM['code_size'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        {'input_size':config.PARAM['code_size']*config.PARAM['num_level'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
@@ -63,46 +85,40 @@ class Decoder(nn.Module):
             x = self.decoder[i](x)
         return x
 
-class vade(nn.Module):
+class vade_bmm(nn.Module):
     def __init__(self,classes_size):
-        super(vade, self).__init__()
+        super(vade_bmm, self).__init__()
         self.classes_size = classes_size
         self.encoder = Encoder()
         self.decoder = Decoder()
-        self.encoder_mean = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
-        self.encoder_logvar = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.encoder_y = Cell({'input_size':2000,'output_size':config.PARAM['code_size']*config.PARAM['num_level'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+
         self.param = nn.ParameterDict({
-            'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], self.classes_size)),
-            'var': nn.Parameter(torch.ones(config.PARAM['code_size'], self.classes_size)),
+            'mean': nn.Parameter(torch.ones(config.PARAM['code_size'], self.classes_size)/config.PARAM['num_level']),
             'pi': nn.Parameter(torch.ones(self.classes_size)/self.classes_size)
             })
 
-    def reparameterize(self, mu, logvar):
+    def reparameterize(self, logits, temperature):
         if self.training:
-            std = logvar.mul(0.5).exp_()
-            eps = std.new(std.size()).normal_()
-            z = eps.mul(std).add_(mu)
+            z = gumbel_softmax(logits,temperature,hard=False)
         else:
-            z = mu
+            z = gumbel_softmax(logits,temperature,hard=True)
         return z
 
     def classifier(self, input, protocol):        
-        z = input.view(input.size(0),-1,1)
-        q_c_z = torch.exp(torch.log(self.param['pi']) - torch.sum(0.5*torch.log(2*math.pi*self.param['var']) +\
-            (z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-10
-        q_c_z = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)       
+        z = input.view(input.size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
+        q_c_z = torch.exp(torch.log(self.param['pi'])+torch.sum(z[:,:,1,:]*torch.log(self.param['mean'])+z[:,:,0,:]*torch.log(1-self.param['mean']),dim=1))+1e-10
+        q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True)
         return q_c_z
 
     def classification_loss_fn(self, input, output, protocol):
         loss = torch.tensor(0,device=device,dtype=torch.float32)
         if(protocol['tuning_param']['classification'] > 0): 
             q_c_z = output['classification']
-            q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
-            q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
-            loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
-                 torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'],dim=1),dim=1)
-            loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
-            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(self.param['pi'])),dim=1)
+            q_y = output['compression']['param']['qy'].view(input['img'].size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
+            loss = loss - torch.sum(q_c_z*torch.sum(q_y[:,:,1,:]*torch.log(self.param['mean']*config.PARAM['num_level'])+q_y[:,:,0,:]*torch.log((1-self.param['mean'])*config.PARAM['num_level']),dim=1),dim=1)
+            loss = loss + torch.sum(output['compression']['param']['qy']*torch.log(output['compression']['param']['qy']*config.PARAM['num_level']+1e-10),dim=1)
+            loss = loss + (q_c_z*(q_c_z.log()-self.param['pi'].log())).sum(dim=1)
         return loss
 
     def compression_loss_fn(self, input, output, protocol):
@@ -122,14 +138,13 @@ class vade(nn.Module):
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
             'classification':torch.tensor(0,device=device,dtype=torch.float32)}
-        
+
         img = input['img'].view(-1,1024).float()
         encoded = self.encoder(img,protocol)
-        mu = self.encoder_mean(encoded)
-        logvar = self.encoder_logvar(encoded)
-        output['compression']['code'] = self.reparameterize(mu,logvar)
-        output['compression']['param'] = {'mu':mu,'logvar':logvar}
-        
+        y = self.encoder_y(encoded)
+        qy = y.view(y.size(0),config.PARAM['code_size'],config.PARAM['num_level'])
+        output['compression']['code'] = self.reparameterize(qy,protocol['temperature'])
+        output['compression']['param'] = {'qy':F.softmax(qy, dim=-1).reshape(y.size())}
         if(protocol['tuning_param']['compression'] > 0):
             compression_output = self.decoder(output['compression']['code'],protocol)
             output['compression']['img'] = compression_output.view(input['img'].size())

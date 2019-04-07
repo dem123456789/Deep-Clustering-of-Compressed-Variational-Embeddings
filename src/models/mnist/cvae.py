@@ -90,9 +90,10 @@ class cvae(nn.Module):
         if self.training:
             std = logvar.mul(0.5).exp_()
             eps = std.new(std.size()).normal_()
-            return eps.mul(std).add_(mu)
+            z = eps.mul(std).add_(mu)
         else:
-            return mu
+            z = mu
+        return z
 
     def classifier(self, input, protocol):        
         z = input.view(input.size(0),-1,1)
@@ -108,9 +109,9 @@ class cvae(nn.Module):
             q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
             q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
             loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
-                 torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'], dim=1), dim=1)
+                 torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'],dim=1),dim=1)
             loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
-            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(self.param['pi'])),1)
+            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(self.param['pi'])),dim=1)
         return loss
 
     def compression_loss_fn(self, input, output, protocol):
