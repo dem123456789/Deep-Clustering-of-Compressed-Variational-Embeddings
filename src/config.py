@@ -21,7 +21,7 @@ def init():
         'batch_size': [100,500],
         'num_workers': 0,
         'data_size': 0,
-        'device': 'cuda',
+        'device': 'cpu',
         'activation': 'relu',
         'max_num_epochs': 100,
         'save_mode': 0,
