@@ -39,7 +39,7 @@ class Encoder(nn.Module):
     def make_encoder_info(self):
         encoder_info = [
         {'input_size':1024,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},        
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},       
         ]
@@ -67,7 +67,7 @@ class Decoder(nn.Module):
         decoder_info = [
         {'input_size':config.PARAM['code_size']*config.PARAM['num_level'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
+        # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':1024,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'sigmoid','raw':False}, 
         ]
@@ -80,7 +80,8 @@ class Decoder(nn.Module):
         return decoder
         
     def forward(self, input, protocol):
-        x = input
+        # x = input
+        x = input.view(input.size(0),-1,1,1)
         for i in range(len(self.decoder)):
             x = self.decoder[i](x)
         return x
@@ -89,6 +90,7 @@ class vade_bmm(nn.Module):
     def __init__(self,classes_size):
         super(vade_bmm, self).__init__()
         self.classes_size = classes_size
+        self.temp = config.PARAM['temperature']
         self.encoder = Encoder()
         self.decoder = Decoder()
         self.encoder_y = Cell({'input_size':2000,'output_size':config.PARAM['code_size']*config.PARAM['num_level'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
@@ -100,24 +102,42 @@ class vade_bmm(nn.Module):
 
     def reparameterize(self, logits, temperature):
         if self.training:
-            z = gumbel_softmax(logits,temperature,hard=False)
+            z = gumbel_softmax(logits,temperature)
+            # z_1 = gumbel_softmax(logits,0.5,hard=False)
+            # z_2 = gumbel_softmax(logits,0.5,hard=True)
+            # print('sample y, hard=F',z_1.view(100,32,2)[:,0,:])
+            # a = torch.argmax(z_1.view(100,32,2),dim=2).float()[:,0]
+            # b = torch.argmax(logits.view(100,32,2),dim=2).float()[:,0]
+            # c = F.gumbel_softmax(logits.view(100,32,2)[:,0,:], tau=1., hard=True, eps=1e-10)[:,0]
+            # e = torch.argmax(F.gumbel_softmax(logits.view(100,32,2)[:,0,:], tau=1., hard=False, eps=1e-10),dim=-1).float()
+            # d = z_2.view(100,32,2)[:,0,0]
+            # print('if argmax(sample y)==gumbel_softmax(qy, hard =T)?',torch.eq(a,d).sum())
+            # print('if F.gumbel_softmax(qy, hard =T) == gumbel_softmax(qy, hard =T)?',torch.eq(c,d).sum())
+            # print('if argmax(qy)==gumbel_softmax(qy, hard =T)?',torch.eq(b,d).sum())
+            # print('if argmax(qy)==F.gumbel_softmax(sample y, hard =T)?',torch.eq(b,c).sum())
+            # print('if argmax(F sample y)==F.gumbel_softmax(sample y, hard =T)?',torch.eq(e,c).sum())
         else:
-            z = gumbel_softmax(logits,temperature,hard=True)
+            z = F.softmax(logits, dim=-1).reshape(logits.size(0),-1)
         return z
 
     def classifier(self, input, protocol):        
-        z = input.view(input.size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
-        q_c_z = torch.exp(torch.log(self.param['pi'])+torch.sum(z[:,:,1,:]*torch.log(self.param['mean'])+z[:,:,0,:]*torch.log(1-self.param['mean']),dim=1))+1e-10
-        q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True)
+        z = input.view(input.size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)#100x32x2x1
+        z = z[:,:,0,:] #100x32x1
+        p_y_c = torch.sigmoid(self.param['mean'])
+        q_c_z = torch.exp(torch.log(self.param['pi'])+torch.sum(z*torch.log(p_y_c)+(1-z)*torch.log(1-p_y_c),dim=1))+1e-10
+        q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #NxH
         return q_c_z
 
     def classification_loss_fn(self, input, output, protocol):
         loss = torch.tensor(0,device=device,dtype=torch.float32)
+        z = output['classification']['code'].view(input['img'].size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
+        z = z[:,:,0,:] #100x32x1
+        p_y_c = torch.sigmoid(self.param['mean'])
         if(protocol['tuning_param']['classification'] > 0): 
-            q_c_z = output['classification']
+            q_c_z = output['classification']['classifier'] #NxH
             q_y = output['compression']['param']['qy'].view(input['img'].size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
-            loss = loss - torch.sum(q_c_z*torch.sum(q_y[:,:,1,:]*torch.log(self.param['mean']*config.PARAM['num_level'])+q_y[:,:,0,:]*torch.log((1-self.param['mean'])*config.PARAM['num_level']),dim=1),dim=1)
-            loss = loss + torch.sum(output['compression']['param']['qy']*torch.log(output['compression']['param']['qy']*config.PARAM['num_level']+1e-10),dim=1)
+            loss = loss + torch.sum(output['compression']['param']['qy']*torch.log(output['compression']['param']['qy']+1e-10),dim=1)
+            loss = loss - torch.sum(q_c_z*torch.sum(z*torch.log(p_y_c)+(1-z)*torch.log(1-p_y_c),dim=1),dim=1)
             loss = loss + (q_c_z*(q_c_z.log()-self.param['pi'].log())).sum(dim=1)
         return loss
 
@@ -137,21 +157,22 @@ class vade_bmm(nn.Module):
     def forward(self, input, protocol):
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
-            'classification':torch.tensor(0,device=device,dtype=torch.float32)}
+            'classification':{'code':torch.tensor(0,device=device,dtype=torch.float32),'classifier':torch.tensor(0,device=device,dtype=torch.float32)}}
 
         img = input['img'].view(-1,1024).float()
         encoded = self.encoder(img,protocol)
         y = self.encoder_y(encoded)
         qy = y.view(y.size(0),config.PARAM['code_size'],config.PARAM['num_level'])
-        output['compression']['code'] = self.reparameterize(qy,protocol['temperature'])
+        output['compression']['code'] = self.reparameterize(qy,self.temp)
+        output['classification']['code'] = gumbel_softmax(qy,self.temp,hard=True)
         output['compression']['param'] = {'qy':F.softmax(qy, dim=-1).reshape(y.size())}
         if(protocol['tuning_param']['compression'] > 0):
             compression_output = self.decoder(output['compression']['code'],protocol)
             output['compression']['img'] = compression_output.view(input['img'].size())
         
         if(protocol['tuning_param']['classification'] > 0):
-            classification_output = self.classifier(output['compression']['code'],protocol)
-            output['classification'] = classification_output
+            classification_output = self.classifier(output['classification']['code'],protocol)
+            output['classification']['classifier'] = classification_output
         
         output['loss'] = self.loss_fn(input,output,protocol)
 
