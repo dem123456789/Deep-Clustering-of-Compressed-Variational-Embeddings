@@ -17,7 +17,7 @@ class Encoder(nn.Module):
     def make_encoder_info(self):
         encoder_info = [
         {'input_size':1024,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},        
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},       
         ]
@@ -45,7 +45,7 @@ class Decoder(nn.Module):
         decoder_info = [
         {'input_size':config.PARAM['code_size'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
         {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
+        # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         {'input_size':500,'output_size':1024,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'sigmoid','raw':False}, 
         ]
@@ -96,12 +96,15 @@ class vade(nn.Module):
     def classification_loss_fn(self, input, output, protocol):
         loss = torch.tensor(0,device=device,dtype=torch.float32)
         if(protocol['tuning_param']['classification'] > 0): 
-            q_c_z = output['classification']
+            q_c_z = output['classification']['classifier']
             q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
             q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
             loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
                  torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'],dim=1),dim=1)
             loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi), 1)).squeeze(1)
+            # loss = loss + torch.sum(0.5*q_c_z*torch.sum(torch.log(self.param['var'])+\
+            #      torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'],dim=1),dim=1)
+            # loss = loss + (-0.5*torch.sum(1+q_logvar, 1)).squeeze(1)
             loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(self.param['pi'])),dim=1)
         return loss
 
@@ -121,22 +124,23 @@ class vade(nn.Module):
     def forward(self, input, protocol):
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
-            'classification':torch.tensor(0,device=device,dtype=torch.float32)}
+            'classification': {'classifier':torch.tensor(0,device=device,dtype=torch.float32),'code':[]}}
         
         img = input['img'].view(-1,1024).float()
         encoded = self.encoder(img,protocol)
         mu = self.encoder_mean(encoded)
         logvar = self.encoder_logvar(encoded)
         output['compression']['code'] = self.reparameterize(mu,logvar)
+        output['classification']['code'] = self.reparameterize(mu,logvar)
         output['compression']['param'] = {'mu':mu,'logvar':logvar}
-        
+
         if(protocol['tuning_param']['compression'] > 0):
             compression_output = self.decoder(output['compression']['code'],protocol)
             output['compression']['img'] = compression_output.view(input['img'].size())
         
         if(protocol['tuning_param']['classification'] > 0):
             classification_output = self.classifier(output['compression']['code'],protocol)
-            output['classification'] = classification_output
+            output['classification']['classifier'] = classification_output
         
         output['loss'] = self.loss_fn(input,output,protocol)
 

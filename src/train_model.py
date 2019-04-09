@@ -69,9 +69,12 @@ def runExperiment(seed):
         cur_train_meter_panel = train(train_loader,model,optimizer,epoch,train_protocol)
         cur_test_meter_panel = test(test_loader,model,epoch,test_protocol,model_TAG)
         print_result(model_TAG,epoch,cur_train_meter_panel,cur_test_meter_panel)
-        # print('mu',model.param['mu'].data)
-        # print('var',model.param['var'].data)
-        # print('pi',model.param['pi'].data)
+        if (config.PARAM['model_name']=='vade'):
+            print('mu',model.param['mu'].data)
+            print('var',model.param['var'].data)
+            print('pi',model.param['pi'].data)
+        if (config.PARAM['model_name']=='vade_bmm'):
+            print('mean',model.param['mean'].data)
         # scheduler.step(cur_test_meter_panel.panel['loss'].avg)
         scheduler.step(epoch)
         train_meter_panel.update(cur_train_meter_panel)
@@ -99,7 +102,7 @@ def train(train_loader,model,optimizer,epoch,protocol):
         optimizer.zero_grad()
         output['loss'].backward()
         optimizer.step()
-        if (config.PARAM['tuning_param']=='vade_bmm' and i % 100) == 1:
+        if (config.PARAM['model_name']=='vade_bmm' and i % 100) == 1:
             model.temp = np.maximum(model.temp * np.exp(-protocol['annealing_rate'] * i), protocol['min_temperature'])
         evaluation = meter_panel.eval(input,output,protocol)
         batch_time = time.time() - end
@@ -171,6 +174,7 @@ def init_param(train_loader,model,protocol):
             input = dict_to_device(input,device)
             protocol = update_train_protocol(input,i,len(train_loader),protocol)
             output = model(input,protocol)
+            # z = output['compression']['code'].view(input['img'].size(0),-1)
             z = output['classification']['code'].view(input['img'].size(0),-1)
             Z = torch.cat((Z,z),0) if i > 0 else z
         if(protocol['init_param_mode'] == 'random'):
@@ -197,6 +201,7 @@ def init_param(train_loader,model,protocol):
             Z = Z.view(-1,32,2)[:,:,0]
             bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
             bmmq = torch.tensor(bmm.q).float().to(device)
+            # model.param['mean'].copy_(bmmq)
             model.param['mean'].copy_(torch.log(bmmq/(1-bmmq)))
         else:
             raise ValueError('Initialization method not supported')

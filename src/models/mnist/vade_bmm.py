@@ -38,10 +38,10 @@ class Encoder(nn.Module):
         
     def make_encoder_info(self):
         encoder_info = [
-        {'input_size':1024,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},        
+        {'input_size':1024,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},        
         # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},       
+        {'input_size':512,'output_size':256,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        # {'input_size':256,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},       
         ]
         return encoder_info
         
@@ -65,11 +65,11 @@ class Decoder(nn.Module):
         
     def make_decoder_info(self):
         decoder_info = [
-        {'input_size':config.PARAM['code_size']*config.PARAM['num_level'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
-        {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
+        {'input_size':config.PARAM['code_size']*config.PARAM['num_level'],'output_size':256,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False},
+        # {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
         # {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
-        {'input_size':500,'output_size':1024,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'sigmoid','raw':False}, 
+        {'input_size':256,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':config.PARAM['activation'],'raw':False}, 
+        {'input_size':512,'output_size':1024,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'sigmoid','raw':False}, 
         ]
         return decoder_info
 
@@ -93,7 +93,7 @@ class vade_bmm(nn.Module):
         self.temp = config.PARAM['temperature']
         self.encoder = Encoder()
         self.decoder = Decoder()
-        self.encoder_y = Cell({'input_size':2000,'output_size':config.PARAM['code_size']*config.PARAM['num_level'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.encoder_y = Cell({'input_size':256,'output_size':config.PARAM['code_size']*config.PARAM['num_level'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
 
         self.param = nn.ParameterDict({
             'mean': nn.Parameter(torch.ones(config.PARAM['code_size'], self.classes_size)/config.PARAM['num_level']),
@@ -124,6 +124,7 @@ class vade_bmm(nn.Module):
         z = input.view(input.size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)#100x32x2x1
         z = z[:,:,0,:] #100x32x1
         p_y_c = torch.sigmoid(self.param['mean'])
+        # p_y_c = self.param['mean']
         q_c_z = torch.exp(torch.log(self.param['pi'])+torch.sum(z*torch.log(p_y_c)+(1-z)*torch.log(1-p_y_c),dim=1))+1e-10
         q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #NxH
         return q_c_z
@@ -133,6 +134,7 @@ class vade_bmm(nn.Module):
         z = output['classification']['code'].view(input['img'].size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
         z = z[:,:,0,:] #100x32x1
         p_y_c = torch.sigmoid(self.param['mean'])
+        # p_y_c = self.param['mean']
         if(protocol['tuning_param']['classification'] > 0): 
             q_c_z = output['classification']['classifier'] #NxH
             q_y = output['compression']['param']['qy'].view(input['img'].size(0),config.PARAM['code_size'],config.PARAM['num_level'],1)
