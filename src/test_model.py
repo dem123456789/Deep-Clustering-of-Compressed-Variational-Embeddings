@@ -43,8 +43,10 @@ def runExperiment(model_TAG):
     
     print(config.PARAM)
     _,test_dataset = fetch_dataset(data_name=test_data_name)
-    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size*world_size, pin_memory=True, num_workers=num_workers*world_size, collate_fn = input_collate)
-    best = load('./output/model/{}_best.pkl'.format(resume_model_TAG))
+#    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size*world_size, pin_memory=True, num_workers=num_workers*world_size, collate_fn = input_collate)
+    valid_data_size = len(test_dataset) if(data_size==0) else data_size
+    _,test_loader = split_dataset(_,test_dataset,valid_data_size,batch_size=batch_size,radomGen=np.random.RandomState(200),shuffle=True)
+    best = load('./output/model/{}_best.pkl'.format(model_TAG))
     last_epoch = best['epoch']
     print('Test from {}'.format(last_epoch))
     model = eval('models.{}.{}(classes_size=test_dataset.classes_size).to(device)'.format(model_dir,model_name)) 
@@ -55,19 +57,19 @@ def runExperiment(model_TAG):
     return result
             
 def test(validation_loader,model,epoch,protocol):
-    meter_panel = Meter_Panel(metric_names)
+    meter_panel = Meter_Panel(protocol['metric_names'])
     with torch.no_grad():
         model.train(False)
         end = time.time()
         for i, input in enumerate(validation_loader):
             input = collate(input)
             input = dict_to_device(input,device)
-            protocol = update_test_protocol(input,protocol)  
+            protocol = update_test_protocol(input,i,len(validation_loader),protocol)  
             output = model(input,protocol)
             output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
             evaluation = meter_panel.eval(input,output,protocol)
             batch_time = time.time() - end
-            meter_panel.update(evaluation,batch_size)
+            meter_panel.update(evaluation,len(input['img']))
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
     return meter_panel
@@ -76,7 +78,8 @@ def init_test_protocol(dataset):
     protocol = {}
     protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
     protocol['metric_names'] = config.PARAM['test_metric_names'].copy()
-    protocol['loss_mode'] = config.PARAM['loss_mode']                                                        
+    protocol['loss_mode'] = config.PARAM['loss_mode']
+    protocol['temperature'] = config.PARAM['temperature']                                                        
     return protocol
     
 def collate(input):
@@ -84,7 +87,13 @@ def collate(input):
         input[k] = torch.stack(input[k],0)
     return input
 
-def update_test_protocol(input,protocol):
+def update_test_protocol(input,i,num_batch,protocol):
+    if(i == num_batch-1):
+        protocol['activate_full'] = True
+    else:
+        protocol['activate_full'] = False
+    if(i % 100) == 1:
+        protocol['temperature'] = np.maximum(protocol['temperature']*np.exp(-config.PARAM['annealing_rate']*i),config.PARAM['min_temperature'])
     if(input['img'].size(1)==1):
         protocol['img_mode'] = 'L'
     elif(input['img'].size(1)==3):
@@ -94,8 +103,8 @@ def update_test_protocol(input,protocol):
     return protocol
         
 def print_result(model_TAG,epoch,result):
-    print('Test Epoch({}): {}({}_{}){}'.format(model_TAG,epoch,result.summary(['loss']+config.PARAM['test_metric_names'])))
+    print('Test Epoch({}): {}{}'.format(model_TAG,epoch,result.summary(['loss']+config.PARAM['test_metric_names'])))
     return
-    
+   
 if __name__ == "__main__":
     main()    

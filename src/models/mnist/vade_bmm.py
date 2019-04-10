@@ -90,7 +90,6 @@ class vade_bmm(nn.Module):
     def __init__(self,classes_size):
         super(vade_bmm, self).__init__()
         self.classes_size = classes_size
-        self.temp = config.PARAM['temperature']
         self.encoder = Encoder()
         self.decoder = Decoder()
         self.encoder_y = Cell({'input_size':256,'output_size':config.PARAM['code_size']*config.PARAM['num_level'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
@@ -165,8 +164,8 @@ class vade_bmm(nn.Module):
         encoded = self.encoder(img,protocol)
         y = self.encoder_y(encoded)
         qy = y.view(y.size(0),config.PARAM['code_size'],config.PARAM['num_level'])
-        output['compression']['code'] = self.reparameterize(qy,self.temp)
-        output['classification']['code'] = gumbel_softmax(qy,self.temp,hard=True)
+        output['compression']['code'] = self.reparameterize(qy,protocol['temperature'])
+        output['classification']['code'] = gumbel_softmax(qy,protocol['temperature'],hard=True)
         output['compression']['param'] = {'qy':F.softmax(qy, dim=-1).reshape(y.size())}
         if(protocol['tuning_param']['compression'] > 0):
             compression_output = self.decoder(output['compression']['code'],protocol)
