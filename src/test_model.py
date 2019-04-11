@@ -59,6 +59,7 @@ def runExperiment(model_TAG):
     return result
             
 def test(validation_loader,model,epoch,protocol):
+    entropy_codec = models.classic.Entropy()
     meter_panel = Meter_Panel(protocol['metric_names'])
     with torch.no_grad():
         model.train(False)
@@ -69,6 +70,7 @@ def test(validation_loader,model,epoch,protocol):
             protocol = update_test_protocol(input,i,len(validation_loader),protocol)  
             output = model(input,protocol)
             output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
+            output['compression']['code'] = entropy_codec.encode(output['compression']['code'],protocol)
             evaluation = meter_panel.eval(input,output,protocol)
             batch_time = time.time() - end
             meter_panel.update(evaluation,len(input['img']))
