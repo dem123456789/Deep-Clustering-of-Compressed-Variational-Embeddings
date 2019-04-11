@@ -35,7 +35,7 @@ class Encoder(nn.Module):
         return encoder
             
     def forward(self, input, protocol):
-        x = L_to_RGB(input) if (protocol['mode'] == 'L') else input
+        x = L_to_RGB(input) if (protocol['img_mode'] == 'L') else input
         for i in range(len(self.encoder)):
             x = self.encoder[i](x)
         return x
@@ -65,10 +65,11 @@ class Decoder(nn.Module):
             decoder.append(Cell(self.decoder_info[i]))
         return decoder
         
-    def forward(self, input, protocol):       
+    def forward(self, input, protocol):
+        x = input       
         for i in range(len(self.decoder)):
             x = self.decoder[i](x)
-        x = RGB_to_L(x) if (protocol['mode'] == 'L') else x
+        x = RGB_to_L(x) if (protocol['img_mode'] == 'L') else x
         return x
 
 class cvae(nn.Module):
@@ -77,9 +78,12 @@ class cvae(nn.Module):
         self.classes_size = classes_size
         self.encoder = Encoder()
         self.decoder = Decoder()
-        self.encoder_mean = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
-        self.encoder_logvar = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
-        self.decoder_in = Cell({'input_size':config.PARAM['code_size'],'output_size':2048,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.encoder_mean = nn.Linear(2048, config.PARAM['code_size'])
+        self.encoder_logvar = nn.Linear(2048, config.PARAM['code_size'])
+        # self.encoder_mean = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        # self.encoder_logvar = Cell({'input_size':2048,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        # self.decoder_in = Cell({'input_size':config.PARAM['code_size'],'output_size':2048,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none','raw':False})
+        self.decoder_in = nn.Linear(config.PARAM['code_size'],2048)
         self.param = nn.ParameterDict({
             'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], self.classes_size)),
             'var': nn.Parameter(torch.ones(config.PARAM['code_size'], self.classes_size)),
@@ -105,7 +109,7 @@ class cvae(nn.Module):
     def classification_loss_fn(self, input, output, protocol):
         loss = torch.tensor(0,device=device,dtype=torch.float32)
         if(protocol['tuning_param']['classification'] > 0): 
-            q_c_z = output['classification']
+            q_c_z = output['classification']['classifier']
             q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
             q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
             loss = loss + torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
@@ -130,25 +134,27 @@ class cvae(nn.Module):
     def forward(self, input, protocol):
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
-            'classification':torch.tensor(0,device=device,dtype=torch.float32)}
+            'classification':{'code':[],'classifier':torch.tensor(0,device=device,dtype=torch.float32)}}
         
         img = (input['img']-0.5)*2
         encoded = self.encoder(img,protocol)
-        flattened_encoded = encoded.view(input.size(0),-1)
+        flattened_encoded = encoded.view(img.size(0),-1)
         mu = self.encoder_mean(flattened_encoded)
         logvar = self.encoder_logvar(flattened_encoded)
         output['compression']['code'] = self.reparameterize(mu,logvar)
         output['compression']['param'] = {'mu':mu,'logvar':logvar}
 
         if(protocol['tuning_param']['compression'] > 0):
-            unflattened_code = output['compression']['code'].view(encoded.size())
+            todecode = torch.tanh(self.decoder_in(output['compression']['code']))
+            unflattened_code = todecode.view(encoded.size())
             compression_output = self.decoder(unflattened_code,protocol)
             compression_output = (compression_output+1)*0.5
             output['compression']['img'] = compression_output.view(input['img'].size())
         
         if(protocol['tuning_param']['classification'] > 0):
-            classification_output = self.classifier(output['compression']['code'],protocol)
-            output['classification'] = classification_output
+            output['classification']['code'] = output['compression']['code']
+            classification_output = self.classifier(output['classification']['code'],protocol)
+            output['classification']['classifier'] = classification_output
         
         output['loss'] = self.loss_fn(input,output,protocol)
 

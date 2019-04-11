@@ -25,18 +25,20 @@ for k in config.PARAM:
     exec('{0} = config.PARAM[\'{0}\']'.format(k))
     
 def main():
-    seeds = list(range(init_seed,init_seed+num_Experiments))
-    for i in range(num_Experiments):
-        resume_model_TAG = '{}_{}_{}'.format(seeds[i],model_data_name,model_name) if(resume_TAG=='') else '{}_{}_{}_{}'.format(seeds[i],model_data_name,model_name,resume_TAG)
-        model_TAG = resume_model_TAG if(special_TAG=='') else '{}_{}'.format(resume_model_TAG,special_TAG)
-        print('Experiment: {}'.format(model_TAG))
-        result = runExperiment(model_TAG)
-        save(result,'./output/result/{}.pkl'.format(model_TAG))  
+    for code_size in config.PARAM['code_size_total']:
+        config.PARAM['code_size'] = code_size
+        seeds = list(range(init_seed,init_seed+num_Experiments))
+        for i in range(num_Experiments):
+            resume_model_TAG = '{}_{}_{}_{}'.format(code_size,seeds[i],model_data_name,model_name) if(resume_TAG=='') else '{}_{}_{}_{}_{}'.format(code_size,seeds[i],model_data_name,model_name,resume_TAG)
+            model_TAG = resume_model_TAG if(special_TAG=='') else '{}_{}'.format(resume_model_TAG,special_TAG)
+            print('Experiment: {}'.format(model_TAG))
+            result = runExperiment(model_TAG)
+            save(result,'./output/result/{}.pkl'.format(model_TAG))  
     return
 
 def runExperiment(model_TAG):
     model_TAG_list = model_TAG.split('_')
-    seed = int(model_TAG_list[0])
+    seed = int(model_TAG_list[1])
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     randomGen = np.random.RandomState(seed)

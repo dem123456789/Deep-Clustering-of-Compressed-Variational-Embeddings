@@ -101,7 +101,7 @@ class vade_bmm(nn.Module):
 
     def reparameterize(self, logits, temperature):
         if self.training:
-            z = gumbel_softmax(logits,temperature)
+            z = gumbel_softmax(logits,temperature,hard=True)
             # z_1 = gumbel_softmax(logits,0.5,hard=False)
             # z_2 = gumbel_softmax(logits,0.5,hard=True)
             # print('sample y, hard=F',z_1.view(100,32,2)[:,0,:])

@@ -26,14 +26,16 @@ for k in config.PARAM:
     exec('{0} = config.PARAM[\'{0}\']'.format(k))
     
 def main():
-    seeds = list(range(init_seed,init_seed+num_Experiments))
-    for i in range(num_Experiments):
-        print('Experiment: {}'.format(seeds[i]))
-        runExperiment(seeds[i])
+    for code_size in config.PARAM['code_size_total']:
+        config.PARAM['code_size'] = code_size
+        seeds = list(range(init_seed,init_seed+num_Experiments))
+        for i in range(num_Experiments):
+            print('code_size:{}, Experiment: {}'.format(config.PARAM['code_size'], seeds[i]))
+            runExperiment(seeds[i],config.PARAM['code_size'])
     return
 
-def runExperiment(seed):
-    resume_model_TAG = '{}_{}_{}'.format(seed,model_data_name,model_name) if(resume_TAG=='') else '{}_{}_{}_{}'.format(seed,model_data_name,model_name,resume_TAG)
+def runExperiment(seed,code_size):
+    resume_model_TAG = '{}_{}_{}_{}'.format(code_size,seed,model_data_name,model_name) if(resume_TAG=='') else '{}_{}_{}_{}_{}'.format(code_size,seed,model_data_name,model_name,resume_TAG)
     model_TAG = resume_model_TAG if(special_TAG=='') else '{}_{}'.format(resume_model_TAG,special_TAG)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -144,7 +146,9 @@ def make_optimizer(optimizer_name,model):
     return optimizer
     
 def make_scheduler(scheduler_name,optimizer):
-    if(scheduler_name=='MultiStepLR'):
+    if(scheduler_name=='Vade'):
+        scheduler = adjust_learning_rate(optimizer, min_lr=0.0002)
+    elif(scheduler_name=='MultiStepLR'):
         scheduler = MultiStepLR(optimizer,milestones=milestones,gamma=factor)
     elif(scheduler_name=='ReduceLROnPlateau'):
         scheduler = ReduceLROnPlateau(optimizer,mode='min',factor=factor,verbose=True,threshold=threshold,threshold_mode=threshold_mode)
@@ -162,6 +166,7 @@ def init_param_protocol(dataset,randomGen):
     protocol['classes_size'] = dataset.classes_size
     protocol['randomGen'] = randomGen
     protocol['temperature'] = config.PARAM['temperature']
+    protocol['code_size'] = config.PARAM['code_size']
     return protocol
         
 def init_param(train_loader,model,protocol):
@@ -196,7 +201,7 @@ def init_param(train_loader,model,protocol):
         elif(protocol['init_param_mode'] == 'bmm'):
             from bmm_implement import BMM
             # Z = torch.argmax(Z.view(-1,32,2),dim=2)
-            Z = Z.view(-1,32,2)[:,:,0]
+            Z = Z.view(-1,protocol['code_size'],2)[:,:,0]
             bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
             bmmq = torch.tensor(bmm.q).float().to(device)
             # model.param['mean'].copy_(bmmq)

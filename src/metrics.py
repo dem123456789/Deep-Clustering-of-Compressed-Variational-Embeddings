@@ -114,14 +114,14 @@ def PSNR(output,target,MAX=1.0):
 def BPP(code,img):
     with torch.no_grad():
         if(isinstance(code,torch.Tensor)):
-            nbytes = code.cpu().numpy().nbytes
+            nbytes = code.cpu().detach().numpy().nbytes
         elif(isinstance(code,np.ndarray)):
             nbytes = code.nbytes
         elif(isinstance(code,list)):
             nbytes = 0 
             for i in range(len(code)):
                 if(isinstance(code[i],torch.Tensor)):
-                    nbytes += code[i].cpu().numpy().nbytes
+                    nbytes += code[i].cpu().detach().numpy().nbytes
                 elif(isinstance(code[i],np.ndarray)):
                     nbytes += code[i].nbytes
                 else:
