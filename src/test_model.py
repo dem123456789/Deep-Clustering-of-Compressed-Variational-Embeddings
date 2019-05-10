@@ -76,6 +76,8 @@ def test(validation_loader,model,epoch,protocol):
             meter_panel.update(evaluation,len(input['img']))
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
+        print('vade_bmm_time',time.time()-end)
+
     return meter_panel
      
 def init_test_protocol(dataset):

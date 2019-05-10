@@ -131,7 +131,7 @@ def test(validation_loader,model,epoch,protocol,model_TAG):
             meter_panel.update(evaluation,len(input['img']))
             meter_panel.update({'batch_time':batch_time})
             end = time.time()
-        if(tuning_param['compression'] > 0):
+        if(tuning_param['compression'] > 0 and epoch % 50 == 0):
             save_img(input['img'],'./output/img/image.png')
             save_img(output['compression']['img'],'./output/img/image_{}_{}.png'.format(model_TAG,epoch))
     return meter_panel
@@ -200,12 +200,12 @@ def init_param(train_loader,model,protocol):
             model.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
         elif(protocol['init_param_mode'] == 'bmm'):
             from bmm_implement import BMM
-            # Z = torch.argmax(Z.view(-1,32,2),dim=2)
-            Z = Z.view(-1,protocol['code_size'],2)[:,:,0]
+            Z = torch.argmax(Z.view(-1,protocol['code_size'],2),dim=2) #sample based on p(z=1)
             bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
             bmmq = torch.tensor(bmm.q).float().to(device)
-            # model.param['mean'].copy_(bmmq)
-            model.param['mean'].copy_(torch.log(bmmq/(1-bmmq)))
+            bmmq = custom_replace(bmmq)
+            # model.param['mean'].copy_(bmmq) #DxH
+            model.param['mean'].copy_(torch.log((bmmq)/(1-bmmq)))
         else:
             raise ValueError('Initialization method not supported')
     return

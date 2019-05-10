@@ -112,7 +112,7 @@ class vade_bmm(nn.Module):
 		z = input.view(input.size(0),config.PARAM['code_size'],config.PARAM['num_level'],1) #100x32x2x1
 		p_y_c = custom_replace(torch.sigmoid(self.param['mean']),noise=1e-7) #p(z=1|c) 32x10
 		# q_c_z = torch.exp(torch.log(self.param['pi'])-torch.sum(F.binary_cross_entropy(p_y_c,z.detach(),reduction='none'),dim=1))+1e-10
-		q_c_z = torch.exp(torch.log(F.softmax(self.param['pi'],dim=-1))+torch.sum(z[:,:,1,:]*torch.log(p_y_c)+z[:,:,0,:]*torch.log(1-p_y_c),dim=1))+1e-10
+		q_c_z = torch.exp(torch.log(F.softmax(self.param['pi']))+torch.sum(z[:,:,1,:]*torch.log(p_y_c)+z[:,:,0,:]*torch.log(1-p_y_c),dim=1))+1e-10
 		q_c_z = q_c_z/q_c_z.sum(dim=1,keepdim=True) #NxH
 		if torch.sum(torch.isnan(q_c_z)):
 			print(p_y_c)
@@ -133,7 +133,7 @@ class vade_bmm(nn.Module):
 			loss = loss - torch.sum(q_c_z*torch.sum(q_y[:,:,1,:]*torch.log(p_y_c)+q_y[:,:,0,:]*torch.log(1-p_y_c),dim=1),dim=1)
 			# loss = loss - torch.sum(q_c_z*torch.sum(q_y*torch.log(p_y_c)+(1-q_y)*torch.log(1-p_y_c),dim=1),dim=1)
 			# loss = loss + torch.sum(q_c_z*torch.sum(F.binary_cross_entropy(p_y_c,q_y.detach(),reduction='none'),dim=1),dim=1)
-			loss = loss + (q_c_z*(q_c_z.log()-F.softmax(self.param['pi'],dim=-1).log())).sum(dim=1)
+			loss = loss + (q_c_z*(q_c_z.log()-F.softmax(self.param['pi']).log())).sum(dim=1)
 		return loss
 
 	def compression_loss_fn(self, input, output, protocol):

@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from torchvision.utils import make_grid
 from torchvision.utils import save_image
 from torch.optim.lr_scheduler import _LRScheduler, MultiStepLR, ReduceLROnPlateau
+from sklearn.manifold import TSNE
 
 def makedir_exist_ok(dirpath):
     try:
@@ -235,7 +236,42 @@ class adjust_learning_rate(_LRScheduler):
         if not lr==lr_last:
             print("Epoch", self.last_epoch, ": reducing learning rate to", lr)
         return lr
-  
+
+def custom_replace(tensor, noise=1e-1):
+    # we create a copy of the original tensor, 
+    # because of the way we are replacing them.
+    res = tensor.clone()
+    res[tensor==0] = noise
+    res[tensor==1] = 1-noise
+    return res
+
+def tile(a, dim, n_tile):
+    init_dim = a.size(dim)
+    repeat_idx = [1] * a.dim()
+    repeat_idx[dim] = n_tile
+    a = torch.cat((1-a,a),dim=dim)
+    order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)]))
+    return torch.index_select(a, dim, order_index)
+
+def visualization(z, pred_labels, total_labels, SNE_n_iter, epoch):
+    
+    time_start = time.time()
+    tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=SNE_n_iter)
+    tsne_results = tsne.fit_transform(z)
+    print ('t-SNE done! Time elapsed: {} seconds'.format(time.time()-time_start))
+    
+    plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=total_labels[1:1000])
+    plt.xlabel('latent variable z_1')
+    plt.xlabel('latent variable z_2')
+    plt.savefig('./z_plot'+str(epoch)+'.png')
+    plt.clf()
+    
+    plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=pred_labels[1:1000])
+    plt.xlabel('latent variable z_1')
+    plt.xlabel('latent variable z_2')
+    plt.savefig('./z_classifier_plot'+str(epoch)+'.png')
+    plt.clf()
+
 # ===================Function===================== 
 def p_inverse(A):
     pinv = (A.t().matmul(A)).inverse().matmul(A.t())
