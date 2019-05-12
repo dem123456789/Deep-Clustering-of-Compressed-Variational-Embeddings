@@ -1,14 +1,12 @@
+import config
 import torch
 import torch.nn as nn
-import config
+import math
 import numbers
 import numpy as np
-import math
 import torch.nn.functional as F
-from sklearn.metrics import *
-from sklearn.utils.linear_assignment_ import linear_assignment
 from sklearn.metrics import roc_curve, auc
-from utils import dict_to_device
+from sklearn.utils.linear_assignment_ import linear_assignment
 
 device = config.PARAM['device']
 
@@ -114,14 +112,14 @@ def PSNR(output,target,MAX=1.0):
 def BPP(code,img):
     with torch.no_grad():
         if(isinstance(code,torch.Tensor)):
-            nbytes = code.cpu().detach().numpy().nbytes
+            nbytes = code.cpu().numpy().nbytes
         elif(isinstance(code,np.ndarray)):
             nbytes = code.nbytes
         elif(isinstance(code,list)):
             nbytes = 0 
             for i in range(len(code)):
                 if(isinstance(code[i],torch.Tensor)):
-                    nbytes += code[i].cpu().detach().numpy().nbytes
+                    nbytes += code[i].cpu().numpy().nbytes
                 elif(isinstance(code[i],np.ndarray)):
                     nbytes += code[i].nbytes
                 else:
@@ -201,69 +199,7 @@ def ROC(output,target):
             roc_auc[str(i)] = auc(fpr[str(i)], tpr[str(i)])
         roc = {'fpr':fpr,'tpr':tpr,'roc_auc':roc_auc}
     return roc
-    
-class Meter_Panel(object):
-    def __init__(self,meter_names):
-        self.meter_names = meter_names
-        self.panel = {k: Meter() for k in meter_names}
-        self.metric = Metric(meter_names)
 
-    def reset(self):
-        for k in self.panel:
-            self.panel[k].reset()
-        self.metric.reset()
-        return
-        
-    def update(self, new, n=1):
-        if(isinstance(new, Meter_Panel)):
-            for i in range(len(new.meter_names)):
-                if(new.meter_names[i] in self.panel):
-                    self.panel[new.meter_names[i]].update(new.panel[new.meter_names[i]])
-                else:
-                    self.panel[new.meter_names[i]] = new.panel[new.meter_names[i]]
-                    self.meter_names += [new.meter_names[i]]
-        elif(isinstance(new, dict)):
-            for k in new:
-                if(k not in self.panel):
-                    self.panel[k] = Meter()
-                    self.meter_names += [k]
-                if(isinstance(n,int)):
-                    self.panel[k].update(new[k],n)
-                else:
-                    self.panel[k].update(new[k],n[k])
-        else:
-            raise ValueError('Not supported data type for updating meter panel')
-        return
-        
-    def eval(self, input, output, protocol):
-        tuning_param = protocol['tuning_param']
-        metric_names = protocol['metric_names']
-        evaluation = self.metric.eval(input,output,protocol)
-        return evaluation
-        
-    def summary(self,names):
-        fmt_str = ''
-        if('loss' in names and 'loss' in self.panel):
-            fmt_str += '\tLoss: {:.4f}'.format(self.panel['loss'].avg)
-        if('bpp' in names and 'bpp' in self.panel):
-            fmt_str += '\tBPP: {:.4f}'.format(self.panel['bpp'].avg)
-        if('psnr' in names and 'psnr' in self.panel):
-            fmt_str += '\tPSNR: {:.4f}'.format(self.panel['psnr'].avg)
-        if('ssim' in names and 'ssim' in self.panel):
-            fmt_str += '\tSSIM: {:.4f}'.format(self.panel['ssim'].avg)
-        if('mssim' in names and 'mssim' in self.panel):
-            fmt_str += '\tMSSIM: {:.4f}'.format(self.panel['mssim'].avg)
-        if('acc' in names and 'acc' in self.panel):
-            fmt_str += '\tACC: {:.4f}'.format(self.panel['acc'].avg)
-        if('cluster_acc' in names and 'cluster_acc' in self.panel):
-            fmt_str += '\tClustering_ACC: {:.4f}'.format(self.panel['cluster_acc'].val)
-        if('roc' in names and 'roc' in self.panel):
-            fmt_str += '\tROC: {}'.format(self.panel['roc'].val['roc_auc'])
-        if('batch_time' in names and 'batch_time' in self.panel):
-            fmt_str += '\tBatch Time: {:.4f}'.format(self.panel['batch_time'].avg)
-        return fmt_str
-                    
-                
 class Meter(object):
     def __init__(self):
         self.reset()
@@ -298,6 +234,64 @@ class Meter(object):
             self.history_val.append(self.val)
         return
         
+class Meter_Panel(object):
+    def __init__(self,meter_names):
+        self.meter_names = meter_names
+        self.panel = {k: Meter() for k in meter_names}
+        self.metric = Metric(meter_names)
+
+    def reset(self):
+        for k in self.panel:
+            self.panel[k].reset()
+        self.metric.reset()
+        return
+        
+    def update(self, new, n=1):
+        if(isinstance(new, Meter_Panel)):
+            for i in range(len(new.meter_names)):
+                if(new.meter_names[i] in self.panel):
+                    self.panel[new.meter_names[i]].update(new.panel[new.meter_names[i]])
+                else:
+                    self.panel[new.meter_names[i]] = new.panel[new.meter_names[i]]
+                    self.meter_names += [new.meter_names[i]]
+        elif(isinstance(new, dict)):
+            for k in new:
+                if(k not in self.panel):
+                    self.panel[k] = Meter()
+                    self.meter_names += [k]
+                if(isinstance(n,int)):
+                    self.panel[k].update(new[k],n)
+                else:
+                    self.panel[k].update(new[k],n[k])
+        else:
+            raise ValueError('Not supported data type for updating meter panel')
+        return
+        
+    def eval(self, input, output, metric_names):
+        evaluation = self.metric.eval(input,output,metric_names)
+        return evaluation
+        
+    def summary(self,names):
+        fmt_str = ''
+        if('loss' in names and 'loss' in self.panel):
+            fmt_str += '\tLoss: {:.4f}'.format(self.panel['loss'].avg)
+        if('bpp' in names and 'bpp' in self.panel):
+            fmt_str += '\tBPP: {:.4f}'.format(self.panel['bpp'].avg)
+        if('psnr' in names and 'psnr' in self.panel):
+            fmt_str += '\tPSNR: {:.4f}'.format(self.panel['psnr'].avg)
+        if('ssim' in names and 'ssim' in self.panel):
+            fmt_str += '\tSSIM: {:.4f}'.format(self.panel['ssim'].avg)
+        if('mssim' in names and 'mssim' in self.panel):
+            fmt_str += '\tMSSIM: {:.4f}'.format(self.panel['mssim'].avg)
+        if('acc' in names and 'acc' in self.panel):
+            fmt_str += '\tACC: {:.4f}'.format(self.panel['acc'].avg)
+        if('cluster_acc' in names and 'cluster_acc' in self.panel):
+            fmt_str += '\tACC: {:.4f}'.format(self.panel['cluster_acc'].val)
+        if('roc' in names and 'roc' in self.panel):
+            fmt_str += '\tROC: {}'.format(self.panel['roc'].val['roc_auc'])
+        if('batch_time' in names and 'batch_time' in self.panel):
+            fmt_str += '\tBatch Time: {:.4f}'.format(self.panel['batch_time'].avg)
+        return fmt_str     
         
 class Metric(object):
     
@@ -314,34 +308,34 @@ class Metric(object):
         self.label = None
         return
         
-    def eval(self, input, output, protocol):
+    def eval(self, input, output, metric_names):
         evaluation = {}
         evaluation['loss'] = output['loss'].item()
-        if(protocol['tuning_param']['compression'] > 0):
-            if('psnr' in protocol['metric_names']):
+        if(config.PARAM['tuning_param']['compression'] > 0):
+            if('psnr' in metric_names):
                 evaluation['psnr'] = PSNR(output['compression']['img'],input['img'])
-            if('ssim' in protocol['metric_names']):
+            if('ssim' in metric_names):
                 evaluation['ssim'] = SSIM(output['compression']['img'],input['img'])
-            if('mssim' in protocol['metric_names']):
+            if('mssim' in metric_names):
                 evaluation['mssim'] = MSSIM(output['compression']['img'],input['img'])
-            if('bpp' in protocol['metric_names']):
+            if('bpp' in metric_names):
                 evaluation['bpp'] = BPP(output['compression']['code'],input['img'])
-        if(protocol['tuning_param']['classification'] > 0):
+        if(config.PARAM['tuning_param']['classification'] > 0):
             topk=config.PARAM['topk']
             if(self.if_save):
-                self.score = torch.cat((self.score,output['classification']['classifier'].cpu()),0) if self.score is not None else output['classification']['classifier'].cpu()
+                self.score = torch.cat((self.score,output['classification'].cpu()),0) if self.score is not None else output['classification'].cpu()
                 self.label = torch.cat((self.label,input['label'].cpu()),0) if self.label is not None else input['label'].cpu()
-            if('acc' in protocol['metric_names']):
-                evaluation['acc'] = ACC(output['classification']['classifier'],input['label'],topk=topk)
-            if('cluster_acc' in protocol['metric_names']):
-                evaluation['cluster_acc'] = Cluster_ACC(self.score,self.label,topk=topk) if(protocol['activate_full']) else 0
-            if('f1' in protocol['metric_names']):
-                evaluation['f1'] = F1(self.score,self.label,topk=topk) if(protocol['activate_full']) else 0
-            if('precision' in protocol['metric_names']):
-                evaluation['precision'] = Precision(self.score.self.label,topk=topk) if(protocol['activate_full']) else 0
-            if('recall' in protocol['metric_names']):
-                evaluation['recall'] = Recall(self.score,self.label,topk=topk) if(protocol['activate_full']) else 0
-            if('roc' in protocol['metric_names']):
-                evaluation['roc'] = ROC(self.score,self.label) if(protocol['activate_full']) else {'fpr':0,'tpr':0,'roc_auc':0}
+            if('acc' in metric_names):
+                evaluation['acc'] = ACC(output['classification'],input['label'],topk=topk)
+            if('cluster_acc' in metric_names):
+                evaluation['cluster_acc'] = Cluster_ACC(self.score,self.label,topk=topk) if(config.PARAM['activate_full']) else 0
+            if('f1' in metric_names):
+                evaluation['f1'] = F1(self.score,self.label,topk=topk) if(config.PARAM['activate_full']) else 0
+            if('precision' in metric_names):
+                evaluation['precision'] = Precision(self.score.self.label,topk=topk) if(config.PARAM['activate_full']) else 0
+            if('recall' in metric_names):
+                evaluation['recall'] = Recall(self.score,self.label,topk=topk) if(config.PARAM['activate_full']) else 0
+            if('roc' in metric_names):
+                evaluation['roc'] = ROC(self.score,self.label) if(config.PARAM['activate_full']) else {'fpr':0,'tpr':0,'roc_auc':0}
         return evaluation
    

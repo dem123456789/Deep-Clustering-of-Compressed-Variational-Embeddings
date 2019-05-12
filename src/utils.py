@@ -1,21 +1,19 @@
-import time
-import torch
-import torchvision
-import itertools
-import os
-import sys
+import config
+import collections.abc as container_abcs
 import cv2
 import errno
 import numpy as np
+import os
+import time
+import torch
 import torch.nn as nn
-import collections.abc as container_abcs
-from PIL import Image
+import torchvision
 from itertools import repeat
 from matplotlib import pyplot as plt
+from PIL import Image
+from torch.optim.lr_scheduler import _LRScheduler
 from torchvision.utils import make_grid
 from torchvision.utils import save_image
-from torch.optim.lr_scheduler import _LRScheduler, MultiStepLR, ReduceLROnPlateau
-from sklearn.manifold import TSNE
 
 def makedir_exist_ok(dirpath):
     try:
@@ -26,7 +24,7 @@ def makedir_exist_ok(dirpath):
         else:
             raise
     return
-            
+
 def save(input,dir,protocol = 2,mode='torch'):
     dirname = os.path.dirname(dir)
     makedir_exist_ok(dirname)
@@ -85,52 +83,7 @@ def list_files(root, suffix, prefix=False):
     if prefix is True:
         files = [os.path.join(root, d) for d in files]
     return files
-    
-def get_correct_cnt(output,target):
-    max_index = output.max(dim = 1)[1]  
-    correct_cnt = (max_index == target).float().sum()
-    return correct_cnt
-    
-def modelselect_input_feature(dims,init_size=2,step_size=1,start_point=None):
-    if(isinstance(dims, int)):
-        dims = [dims]
-    init_size=[init_size]*len(dims) 
-    step_size = [step_size]*len(dims) 
-    if (start_point is None):
-        start_point = [np.int(dims[i]/2) for i in range(len(dims))]
-    else:
-        start_point = [0 for i in range(len(dims))]
-    ifcovered = [False]*len(dims)
-    input_features = []
-    j = 0
-    while(not np.all(ifcovered)):
-        valid_indices = []
-        for i in range(len(dims)):
-            indices = np.arange(start_point[i]-init_size[i]/2-j*step_size[i],start_point[i]+init_size[i]/2+j*step_size[i],dtype=np.int)
-            cur_valid_indices = indices[(indices>=0)&(indices<=(dims[i]-1))]
-            ifcovered[i] = np.any(indices<=0) and np.any(indices>=(dims[i]-1))
-            valid_indices.append(cur_valid_indices)
-        mesh_indices = tuple(np.meshgrid(*valid_indices, sparse=False, indexing='ij'))
-        raveled_indices = np.ravel_multi_index(mesh_indices, dims=dims, order='C') 
-        raveled_indices = raveled_indices.ravel()    
-        input_features.append(raveled_indices)
-        j = j + 1
-    return input_features
 
-def gen_hidden_layers(max_num_nodes,init_size=None,step_size=None):
-    if (init_size is None):
-        init_size=[1]*len(max_num_nodes) 
-    if (step_size is None):
-        step_size = [1]*len(max_num_nodes)
-    num_nodes = []
-    hidden_layers = []
-    for i in range(len(max_num_nodes)):
-        num_nodes.append(list(range(init_size[i],max_num_nodes[i]+1,step_size[i])))
-    while(len(num_nodes) != 0):
-        hidden_layers.extend(list(itertools.product(*num_nodes)))
-        del num_nodes[-1]   
-    return hidden_layers
-        
 def PIL_to_CV2(pil_img):
     cv2_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
     return cv2_img
@@ -224,6 +177,14 @@ def apply_along_dim(input, *other_input, fn, dim, m='flat', **other_kinput):
     output = torch.stack(output, dim=dim[1])
     return output
 
+def apply_fn(module,fn):
+    for n, m in module.named_children():
+        if(hasattr(m,fn)):
+            exec('m.{0}()'.format(fn))
+        if(sum(1 for _ in m.named_children())!=0):
+            exec('apply_fn(m,\'{0}\')'.format(fn))
+    return
+
 class adjust_learning_rate(_LRScheduler):
     def __init__(self, optimizer, min_lr=0.0002, last_epoch=-1):
         self.min_lr = min_lr
@@ -237,41 +198,6 @@ class adjust_learning_rate(_LRScheduler):
             print("Epoch", self.last_epoch, ": reducing learning rate to", lr)
         return lr
 
-def custom_replace(tensor, noise=1e-1):
-    # we create a copy of the original tensor, 
-    # because of the way we are replacing them.
-    res = tensor.clone()
-    res[tensor==0] = noise
-    res[tensor==1] = 1-noise
-    return res
-
-def tile(a, dim, n_tile):
-    init_dim = a.size(dim)
-    repeat_idx = [1] * a.dim()
-    repeat_idx[dim] = n_tile
-    a = torch.cat((1-a,a),dim=dim)
-    order_index = torch.LongTensor(np.concatenate([init_dim * np.arange(n_tile) + i for i in range(init_dim)]))
-    return torch.index_select(a, dim, order_index)
-
-def visualization(z, pred_labels, total_labels, SNE_n_iter, epoch):
-    
-    time_start = time.time()
-    tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=SNE_n_iter)
-    tsne_results = tsne.fit_transform(z)
-    print ('t-SNE done! Time elapsed: {} seconds'.format(time.time()-time_start))
-    
-    plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=total_labels[1:1000])
-    plt.xlabel('latent variable z_1')
-    plt.xlabel('latent variable z_2')
-    plt.savefig('./z_plot'+str(epoch)+'.png')
-    plt.clf()
-    
-    plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=pred_labels[1:1000])
-    plt.xlabel('latent variable z_1')
-    plt.xlabel('latent variable z_2')
-    plt.savefig('./z_classifier_plot'+str(epoch)+'.png')
-    plt.clf()
-
 # ===================Function===================== 
 def p_inverse(A):
     pinv = (A.t().matmul(A)).inverse().matmul(A.t())
@@ -284,22 +210,3 @@ def RGB_to_L(input):
 def L_to_RGB(input):
     output = input.expand(input.size(0),3,input.size(2),input.size(3))
     return output
-    
-# ===================Figure===================== 
-def plt_dist(x):
-    plt.figure()
-    plt.hist(x)
-    plt.show()
-    return
-    
-def plt_meter(Meters,names,TAG):
-    colors = ['r','b']
-    print('Figure name: {}'.format(TAG))
-    for i in range(len(Meters)):
-        fig = plt.figure()
-        plt.plot(Meters[i][3].history_avg,label=names[i],color=colors[i])
-        plt.legend()
-        plt.grid()
-        makedir_exist_ok('./output/fig/{}'.format(names[i])) 
-        fig.savefig('./output/fig/{}/{}'.format(names[i],TAG), dpi=fig.dpi)
-    return

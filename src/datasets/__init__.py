@@ -1,14 +1,13 @@
-from .mnist import MNIST, EMNIST, FashionMNIST
 from .cifar import CIFAR10, CIFAR100
-from .svhn import SVHN
-from .folder import ImageFolder, DatasetFolder
-from .voc import VOCDetection, VOCSegmentation
 from .coco import CocoDetection, CocoCaptions
 from .cub import CUB2011
-from .wheatimage import WheatImage
+from .folder import ImageFolder, DatasetFolder
+from .mnist import MNIST, EMNIST, FashionMNIST
 from .mosi import MOSI
+from .svhn import SVHN
 from .transforms import *
-
+from .voc import VOCDetection, VOCSegmentation
+from .wheatimage import WheatImage
 
 __all__ = ('MNIST','EMNIST', 'FashionMNIST',
            'CIFAR10', 'CIFAR100', 'SVHN',

@@ -1,5 +1,5 @@
-import torch
 import config
+import torch
 import torch.nn as nn
 from functions import Quantize as QuantizeFunction
 
