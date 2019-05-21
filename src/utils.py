@@ -11,7 +11,6 @@ import torchvision
 from itertools import repeat
 from matplotlib import pyplot as plt
 from PIL import Image
-from torch.optim.lr_scheduler import _LRScheduler
 from torchvision.utils import make_grid
 from torchvision.utils import save_image
 
@@ -185,19 +184,6 @@ def apply_fn(module,fn):
             exec('apply_fn(m,\'{0}\')'.format(fn))
     return
 
-class adjust_learning_rate(_LRScheduler):
-    def __init__(self, optimizer, min_lr=0.0002, last_epoch=-1):
-        self.min_lr = min_lr
-        super(adjust_learning_rate, self).__init__(optimizer, last_epoch)
-
-    def get_lr(self):
-        lr = [max(base_lr * (0.9 ** (self.last_epoch//10)), self.min_lr)
-                for base_lr in self.base_lrs]
-        lr_last = [param_group['lr'] for param_group in self.optimizer.param_groups]
-        if not lr==lr_last:
-            print("Epoch", self.last_epoch, ": reducing learning rate to", lr)
-        return lr
-
 # ===================Function===================== 
 def p_inverse(A):
     pinv = (A.t().matmul(A)).inverse().matmul(A.t())
@@ -210,3 +196,21 @@ def RGB_to_L(input):
 def L_to_RGB(input):
     output = input.expand(input.size(0),3,input.size(2),input.size(3))
     return output
+
+def gumbel_softmax(logits, tau=1, hard=False, sample=True, dim=-1):
+    if(sample):
+        eps = 1e-20
+        U = torch.rand(logits.size(),device=logits.device)
+        noise = -(torch.log(-torch.log(U + eps) + eps))
+        gumbels = (logits + noise) / tau
+    else:
+        gumbels = logits / tau
+    y_soft = gumbels.softmax(dim)
+    if hard:
+        index = y_soft.max(dim, keepdim=True)[1]
+        y_hard = torch.zeros_like(logits).scatter_(dim, index, 1.0)
+        ret = (y_hard - y_soft).detach() + y_soft
+    else:
+        ret = y_soft
+    return ret
+    

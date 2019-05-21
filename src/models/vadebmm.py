@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import math
 import numpy as np
 from modules import Cell
-from utils import dict_to_device
+from utils import dict_to_device,gumbel_softmax
 
 device = config.PARAM['device']
    
@@ -161,10 +161,9 @@ class Model(nn.Module):
     
     def reparameterize(self, logits, temperature):
         if self.training:
-            z = F.gumbel_softmax(logits,tau=temperature,hard=True,dim=-1)
+            z = gumbel_softmax(logits,tau=temperature,hard=True,sample=True,dim=-1)
         else:
-            index = logits.max(dim=-1,keepdim=True)[1]
-            z = torch.zeros_like(logits).scatter_(-1,index,1.0)
+            z = gumbel_softmax(logits,tau=temperature,hard=True,sample=False,dim=-1)
         z = z.view(z.size(0),-1,1,1)
         return z
         
