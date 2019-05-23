@@ -17,7 +17,7 @@ def init():
         'batch_size': {'train':100,'test':200},
         'num_workers': 0,
         'data_size': {'train':0,'test':0},
-        'device': 'cuda',
+        'device': 'cpu',
         'num_epochs': 300,
         'save_mode': 0,
         'world_size': 1,
