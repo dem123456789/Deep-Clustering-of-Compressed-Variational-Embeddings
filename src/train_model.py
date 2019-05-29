@@ -138,9 +138,7 @@ def make_optimizer(model):
     return optimizer
     
 def make_scheduler(optimizer):
-    if(config.PARAM['scheduler_name']=='Vade'):
-        scheduler = adjust_learning_rate(optimizer, min_lr=0.0002)
-    elif(config.PARAM['scheduler_name']=='MultiStepLR'):
+    if(config.PARAM['scheduler_name']=='MultiStepLR'):
         scheduler = MultiStepLR(optimizer,milestones=config.PARAM['milestones'],gamma=config.PARAM['factor'])
     elif(config.PARAM['scheduler_name']=='ReduceLROnPlateau'):
         scheduler = ReduceLROnPlateau(optimizer,mode='min',factor=config.PARAM['factor'],verbose=True,threshold=config.PARAM['threshold'],threshold_mode=config.PARAM['threshold_mode'])
@@ -157,7 +155,7 @@ def collate(input):
  
 def print_result(model_TAG,epoch,train_meter_panel,test_meter_panel):
     estimated_finish_time = str(datetime.timedelta(seconds=(config.PARAM['num_epochs'] - epoch)*train_meter_panel.panel['batch_time'].sum))
-    print('Test Epoch({}): {}{}{}, Estimated Finish Time: {}'.format(model_TAG,epoch,test_meter_panel.summary(['loss']+config.PARAM['metric_names']['test']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
+    print('***Test Epoch({}): {}{}{}, Estimated Finish Time: {}'.format(model_TAG,epoch,test_meter_panel.summary(['loss']+config.PARAM['metric_names']['test']),train_meter_panel.summary(['batch_time']),estimated_finish_time))
     return
 
 def resume(model,optimizer,scheduler,model_TAG):

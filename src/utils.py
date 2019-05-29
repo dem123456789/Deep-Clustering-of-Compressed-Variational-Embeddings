@@ -214,8 +214,25 @@ def gumbel_softmax(logits, tau=1, hard=False, sample=True, dim=-1):
         gumbels = logits / tau
     y_soft = gumbels.softmax(dim)
     if hard:
-        index = y_soft.max(dim, keepdim=True)[1]
-        y_hard = torch.zeros_like(logits).scatter_(dim, index, 1.0)
+        index = y_soft.max(dim,keepdim=True)[1]
+        y_hard = torch.zeros_like(logits).scatter_(dim,index,1.0)
+        ret = (y_hard - y_soft).detach() + y_soft
+    else:
+        ret = y_soft
+    return ret
+
+def gumbel_softrank(logits, tau=1, hard=False, sample=True, dim=-1):
+    if(sample):
+        eps = 1e-20
+        U = torch.rand(logits.size(),device=logits.device)
+        noise = -(torch.log(-torch.log(U + eps) + eps))
+        gumbels = (logits + noise) / tau
+    else:
+        gumbels = logits / tau
+    y_soft = gumbels.softmax(dim)
+    if hard:
+        index = y_soft.topk(y_soft.size(dim),dim)[1].view(-1,1)
+        y_hard = logits.new_zeros(logits.size(dim),logits.size(dim)).scatter_(dim, index, 1.0)
         ret = (y_hard - y_soft).detach() + y_soft
     else:
         ret = y_soft
