@@ -148,7 +148,7 @@ class Model(nn.Module):
                 self.classifier.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
                 self.classifier.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
             elif(config.PARAM['init_param_mode'] == 'bmm'):
-                from bmm_implement import BMM
+                from bmm import BMM
                 Z = torch.max(Z.view(-1,config.PARAM['num_levels'],config.PARAM['code_size']),dim=1)[1]
                 bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
                 bmmq = torch.tensor(bmm.q).float().to(device)

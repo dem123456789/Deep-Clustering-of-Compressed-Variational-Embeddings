@@ -3,7 +3,7 @@ def init():
     global PARAM
     PARAM = {
         'data_name': {'train':'MNIST','test':'MNIST'},
-        'model_name': 'vadebmm',
+        'model_name': 'cvadebmm',
         'special_TAG': '28',
         'optimizer_name': 'Adam',
         'scheduler_name': 'CosineAnnealingLR',

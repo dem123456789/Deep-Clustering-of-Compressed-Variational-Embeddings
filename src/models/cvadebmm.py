@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import math
 import numpy as np
 from modules import Cell
-from utils import dict_to_device
+from utils import *
 
 device = config.PARAM['device']
    
@@ -75,8 +75,7 @@ class Classifier(nn.Module):
         self.classifier_info = self.make_classifier_info()
         self.classifier = self.make_classifier()
         self.param = nn.ParameterDict({
-            'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], config.PARAM['classes_size'])),
-            'var': nn.Parameter(torch.ones(config.PARAM['code_size'], config.PARAM['classes_size'])),
+            'codds': nn.Parameter(torch.ones(config.PARAM['num_levels'],config.PARAM['code_size'],config.PARAM['classes_size'])/config.PARAM['num_levels']),
             'odds': nn.Parameter(torch.ones(config.PARAM['classes_size'])/config.PARAM['classes_size'])
             })
 
@@ -95,11 +94,10 @@ class Classifier(nn.Module):
         return classifier
 
     def classification_loss_fn(self, input, output):
-        if(config.PARAM['tuning_param']['classification'] > 0):
+        if(config.PARAM['tuning_param']['classification'] > 0): 
             q_c_z = output['classification']
-            q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
-            q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
-            loss = torch.sum(q_c_z*0.5*torch.sum((q_mu-self.param['mu'])**2/self.param['var']+torch.exp(q_logvar)/self.param['var']-1+torch.log(self.param['var'])-q_logvar,dim=1),dim=1)           
+            q_y = output['compression']['param']['qy'].view(input['img'].size(0),config.PARAM['num_levels'],-1,1)
+            loss = torch.sum(q_c_z*(((F.log_softmax(q_y,dim=1)-F.log_softmax(self.param['codds'],dim=0))*F.log_softmax(q_y,dim=1).exp()).sum(dim=1).sum(dim=1)),dim=1)
             loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-F.log_softmax(self.param['odds'],dim=-1)),dim=1)
             loss = loss.mean()
         else:
@@ -107,11 +105,11 @@ class Classifier(nn.Module):
         return loss
         
     def forward(self, input):
-        z = input.view(input.size(0),-1,1)
-        q_c_z = torch.exp(F.log_softmax(self.param['odds'],dim=-1)-torch.sum(0.5*torch.log(2*math.pi*self.param['var'])+(z-self.param['mu'])**2/(2*self.param['var']),dim=1))+1e-10
+        z = input.view(input.size(0),config.PARAM['num_levels'],-1,1)
+        q_c_z = torch.exp(F.log_softmax(self.param['odds'],dim=-1)+(z*F.log_softmax(self.param['codds'],dim=0)).sum(dim=1).sum(dim=1))+1e-10
         x = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)
         return x
-        
+
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
@@ -119,8 +117,8 @@ class Model(nn.Module):
         self.classifier = Classifier()
         self.encoder = Encoder()
         self.decoder = Decoder()
-        self.encoder_mean = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
-        self.encoder_logvar = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
+        self.encoder_y = Cell({'input_size':128*7*7,'output_size':config.PARAM['code_size']*config.PARAM['num_levels'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
+        self.decoder_in = Cell({'input_size':config.PARAM['code_size']*config.PARAM['num_levels'],'output_size':128*7*7,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
 
     def init_param(self, train_loader):
         with torch.no_grad():
@@ -150,7 +148,7 @@ class Model(nn.Module):
                 gm = GaussianMixture(n_components=config.PARAM['classes_size'],covariance_type='diag',random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
                 self.classifier.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
                 self.classifier.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
-            elif(config.PARAM['init_param_mode']=='bmm'):
+            elif(config.PARAM['init_param_mode'] == 'bmm'):
                 from bmm import BMM
                 Z = torch.max(Z.view(-1,config.PARAM['num_levels'],config.PARAM['code_size']),dim=1)[1]
                 bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
@@ -162,29 +160,29 @@ class Model(nn.Module):
                 raise ValueError('Initialization method not supported')
         return
     
-    def reparameterize(self, mu, logvar):
+    def reparameterize(self, logits, temperature):
         if self.training:
-            std = logvar.mul(0.5).exp_()
-            eps = std.new(std.size()).normal_()
-            z = eps.mul(std).add_(mu)
+            z = gumbel_softmax(logits,tau=temperature,hard=True,sample=True,dim=1)
         else:
-            z = mu
+            z = gumbel_softmax(logits,tau=temperature,hard=True,sample=False,dim=1)
+        z = z.view(z.size(0),-1,1,1)
         return z
         
-    def forward(self, input):
+    def forward(self, input):        
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
             'classification': torch.tensor(0,device=device,dtype=torch.float32)}
 
-        img = input['img'].view(input['img'].size(0),-1,1,1)
+        img = input['img']
         encoded = self.encoder(img)
-        mu = self.encoder_mean(encoded)
-        logvar = self.encoder_logvar(encoded)
-        output['compression']['code'] = self.reparameterize(mu,logvar)
-        output['compression']['param'] = {'mu':mu,'logvar':logvar}
+        y = self.encoder_y(encoded.view(img.size(0),-1,1,1))
+        qy = y.view(y.size(0),config.PARAM['num_levels'],config.PARAM['code_size'])
+        output['compression']['code'] = self.reparameterize(qy,config.PARAM['temperature'])
+        output['compression']['param'] = {'qy':qy}
 
         if(config.PARAM['tuning_param']['compression'] > 0):
-            compression_output = self.decoder(output['compression']['code'])
+            todecode = self.decoder_in(output['compression']['code'])
+            compression_output = self.decoder(todecode.view(encoded.size()))
             output['compression']['img'] = compression_output.view(input['img'].size())
         
         if(config.PARAM['tuning_param']['classification'] > 0):
@@ -194,21 +192,28 @@ class Model(nn.Module):
         output['loss']  = config.PARAM['tuning_param']['compression']*self.decoder.compression_loss_fn(input,output) + config.PARAM['tuning_param']['classification']*self.classifier.classification_loss_fn(input,output)
         return output
 
-def vade(model_TAG):
+def cvadebmm(model_TAG):
     model_TAG_list = model_TAG.split('_')
     init_dim = 1 if(model_TAG_list[1]=='MNIST') else 3  
     config.PARAM['code_size'] = int(model_TAG_list[3])
     config.PARAM['model'] = {}
     config.PARAM['model']['encoder_info'] = [
-        {'input_size':784,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},        
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
-        {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},       
+        {'input_size':init_dim,'output_size':64,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},         
+        {'input_size':64,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'cell':'PixelShuffleCell','mode':'down','scale_factor':2},
+        {'input_size':512,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'cell':'PixelShuffleCell','mode':'down','scale_factor':2},
+        {'input_size':512,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'input_size':128,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']}        
         ]
     config.PARAM['model']['decoder_info'] = [
-        {'input_size':config.PARAM['code_size'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
-        {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']}, 
-        {'input_size':500,'output_size':784,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':'sigmoid'}, 
+        {'input_size':128,'output_size':128,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},      
+        {'input_size':128,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'cell':'PixelShuffleCell','mode':'up','scale_factor':2},
+        {'input_size':128,'output_size':512,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'cell':'PixelShuffleCell','mode':'up','scale_factor':2},
+        {'input_size':128,'output_size':64,'num_layer':1,'cell':'BasicCell','mode':'pass','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
+        {'input_size':64,'output_size':init_dim,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':'sigmoid'}, 
         ]
     config.PARAM['model']['classifier_info'] = [
         {'cell':'none'},
