@@ -77,7 +77,7 @@ class Classifier(nn.Module):
         self.param = nn.ParameterDict({
             'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], config.PARAM['classes_size'])),
             'var': nn.Parameter(torch.ones(config.PARAM['code_size'], config.PARAM['classes_size'])),
-            'pi': nn.Parameter(torch.ones(config.PARAM['classes_size'])/config.PARAM['classes_size'])
+            'odds': nn.Parameter(torch.ones(config.PARAM['classes_size'])/config.PARAM['classes_size'])
             })
 
         for m in self.modules():
@@ -99,10 +99,8 @@ class Classifier(nn.Module):
             q_c_z = output['classification']
             q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
             q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
-            loss = torch.sum(0.5*q_c_z*torch.sum(math.log(2*math.pi)+torch.log(self.param['var'])+\
-                 torch.exp(q_logvar)/self.param['var'] + (q_mu-self.param['mu'])**2/self.param['var'],dim=1),dim=1)
-            loss = loss + (-0.5*torch.sum(1+q_logvar+math.log(2*math.pi),dim=1)).squeeze(1)
-            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-torch.log(F.softmax(self.param['pi'],dim=-1))),dim=1)
+            loss = torch.sum(q_c_z*0.5*torch.sum((q_mu-self.param['mu'])**2/self.param['var']+torch.exp(q_logvar)/self.param['var']-1+torch.log(self.param['var'])-q_logvar,dim=1),dim=1)            
+            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-F.log_softmax(self.param['odds'],dim=-1)),dim=1)
             loss = loss.mean()
         else:
             loss = torch.tensor(0,device=device,dtype=torch.float32)
@@ -110,10 +108,8 @@ class Classifier(nn.Module):
         
     def forward(self, input):
         z = input.view(input.size(0),-1,1)
-        q_c_z = torch.exp(torch.log(F.softmax(self.param['pi'],dim=-1)) - torch.sum(0.5*torch.log(2*math.pi*self.param['var']) + \
-            (z-self.param['mu'])**2/(2*self.param['var']),dim=1)) + 1e-10
-        q_c_z = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)
-        x = q_c_z
+        q_c_z = torch.exp(F.log_softmax(self.param['odds'],dim=-1)-torch.sum(0.5*torch.log(2*math.pi*self.param['var'])+(z-self.param['mu'])**2/(2*self.param['var']),dim=1))+1e-10
+        x = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)
         return x
         
 class Model(nn.Module):
@@ -137,30 +133,32 @@ class Model(nn.Module):
                 output = self(input)
                 z = output['compression']['code'].view(input['img'].size(0),-1)
                 Z = torch.cat((Z,z),0) if i > 0 else z
-            if(config.PARAM['init_param_mode'] == 'random'):
-                C = torch.rand(Z.size(0), config.PARAM['classes_size'],device=device)
-                nk = C.sum(dim=0,keepdim=True) + 10*np.finfo(np.float32).eps
+            if(config.PARAM['init_param_mode']=='random'):
+                C = torch.rand(Z.size(0),config.PARAM['classes_size'],device=device)
+                nk = C.sum(dim=0,keepdim=True)+1e-10
                 self.classifier.param['mu'].copy_(Z.t().matmul(C)/nk)
-                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk - 2*self.classifier.param['mu']*Z.t().matmul(C)/nk + self.classifier.param['mu']**2)
-            elif(config.PARAM['init_param_mode'] == 'kmeans'):
+                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk-2*self.classifier.param['mu']*Z.t().matmul(C)/nk+self.classifier.param['mu']**2)
+            elif(config.PARAM['init_param_mode']=='kmeans'):
                 from sklearn.cluster import KMeans
-                C = Z.new_zeros(Z.size(0), config.PARAM['classes_size'])
-                km = KMeans(n_clusters=config.PARAM['classes_size'], n_init=1, random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
-                C[torch.arange(C.size(0)), torch.tensor(km.labels_).long()] = 1
-                nk = C.sum(dim=0,keepdim=True) + 10*np.finfo(np.float32).eps
+                C = Z.new_zeros(Z.size(0),config.PARAM['classes_size'])
+                km = KMeans(n_clusters=config.PARAM['classes_size'],n_init=1,random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
+                C[torch.arange(C.size(0)),torch.tensor(km.labels_).long()] = 1
+                nk = C.sum(dim=0,keepdim=True)+1e-10
                 self.classifier.param['mu'].copy_(Z.t().matmul(C)/nk)
-                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk - 2*self.classifier.param['mu']*Z.t().matmul(C)/nk + self.classifier.param['mu']**2)
-            elif(config.PARAM['init_param_mode'] == 'gmm'):
+                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk-2*self.classifier.param['mu']*Z.t().matmul(C)/nk+self.classifier.param['mu']**2)
+            elif(config.PARAM['init_param_mode']=='gmm'):
                 from sklearn.mixture import GaussianMixture
-                gm = GaussianMixture(n_components=config.PARAM['classes_size'], covariance_type='diag', random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
+                gm = GaussianMixture(n_components=config.PARAM['classes_size'],covariance_type='diag',random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
                 self.classifier.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
                 self.classifier.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
-            elif(config.PARAM['init_param_mode'] == 'bmm'):
+            elif(config.PARAM['init_param_mode']=='bmm'):
                 from bmm_implement import BMM
-                Z = torch.argmax(Z.view(-1,config.PARAM['code_size'],2),dim=2)
+                Z = torch.max(Z.view(-1,config.PARAM['num_levels'],config.PARAM['code_size']),dim=1)[1]
                 bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
                 bmmq = torch.tensor(bmm.q).float().to(device)
-                self.classifier.param['mean'].copy_(torch.log((bmmq)/(1-bmmq)))
+                bmmq[bmmq<=0.1] = 0.1
+                bmmq[bmmq>=0.9] = 0.9
+                self.classifier.param['codds'].copy_(torch.stack([1-bmmq,bmmq],dim=0))
             else:
                 raise ValueError('Initialization method not supported')
         return

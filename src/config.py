@@ -17,7 +17,7 @@ def init():
         'batch_size': {'train':100,'test':200},
         'num_workers': 0,
         'data_size': {'train':0,'test':0},
-        'device': 'cpu',
+        'device': 'cuda',
         'num_epochs': 300,
         'save_mode': 0,
         'world_size': 1,
@@ -30,6 +30,7 @@ def init():
         'normalization': 'none',
         'activation': 'relu',
         'temperature': 1,
+        'num_levels': 2,
         'init_param_mode': 'bmm',
         'resume_mode': 0,
     }

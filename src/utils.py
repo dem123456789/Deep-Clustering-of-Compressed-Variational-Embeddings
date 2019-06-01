@@ -183,14 +183,7 @@ def apply_fn(module,fn):
         if(sum(1 for _ in m.named_children())!=0):
             exec('apply_fn(m,\'{0}\')'.format(fn))
     return
-    
-def custom_replace(tensor, noise=1e-1):
-    # we create a copy of the original tensor, 
-    # because of the way we are replacing them.
-    res = tensor.clone()
-    res[tensor==0] = noise
-    res[tensor==1] = 1-noise
-    return res
+
 # ===================Function===================== 
 def p_inverse(A):
     pinv = (A.t().matmul(A)).inverse().matmul(A.t())

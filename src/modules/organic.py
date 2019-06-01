@@ -54,7 +54,7 @@ class oConv1d(_oConvNd):
                        
     def forward(self, input, permutation):
         weight = torch.einsum('ao,oil->ail',permutation,self.weight)
-        return F.conv1d(input=input, weight=weight, bias=self.bias,
+        return F.conv1d(input=input, weight=self.weight[coordinates[0],coordinates[1],], bias=self.bias[coordinates[0].view(-1)] if(self.bias is not None) else self.bias,
                         stride=self.stride, padding=self.padding, dilation=self.dilation, groups=self.groups)
 
 class oConv2d(_oConvNd):
@@ -67,9 +67,8 @@ class oConv2d(_oConvNd):
         dilation = ntuple(dilation)
         super(oConv2d, self).__init__(in_channels, out_channels, kernel_size, stride, padding, dilation, groups, bias)
                        
-    def forward(self, input, permutation):
-        weight = torch.einsum('ao,oihw->aihw',permutation,self.weight)
-        return F.conv2d(input=input, weight=weight, bias=self.bias,
+    def forward(self, input, coordinates):
+        return F.conv2d(input=input, weight=self.weight[coordinates[0],coordinates[1],], bias=self.bias[coordinates[0].view(-1)] if(self.bias is not None) else self.bias,
                         stride=self.stride, padding=self.padding, dilation=self.dilation, groups=self.groups)
 
 class oConv3d(_oConvNd):
@@ -84,5 +83,5 @@ class oConv3d(_oConvNd):
                        
     def forward(self, input, permutation):
         weight = torch.einsum('ao,oihwd->aihwd',permutation,self.weight)
-        return F.conv3d(input=input, weight=weight, bias=self.bias,
+        return F.conv3d(input=input, weight=self.weight[coordinates[0],coordinates[1],], bias=self.bias[coordinates[0].view(-1)] if(self.bias is not None) else self.bias,
                         stride=self.stride, padding=self.padding, dilation=self.dilation, groups=self.groups)

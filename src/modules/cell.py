@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict 
 from modules.shuffle import PixelUnShuffle,PixelShuffle
-from modules.organic import oConv1d,oConv2d,oConv3d
+from modules.organic import oConv2d
 from utils import _ntuple,gumbel_softmax,gumbel_softrank
 
 device = config.PARAM['device']
@@ -693,42 +693,45 @@ class CartesianBasicCell(nn.Module):
         cell_info = copy.deepcopy(self.cell_info)
         cell = nn.ModuleDict({})
         if(cell_info['mode']=='down'):
-            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size'],
-                        'kernel_size':3,'stride':2,'padding':1,'dilation':1,'groups':cell_info['cardinality'],'bias':cell_info['bias']}
+            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size']*cell_info['cardinality'],
+                        'kernel_size':3,'stride':2,'padding':1,'dilation':1,'groups':1,'bias':cell_info['bias']}
         elif(cell_info['mode']=='downsample'):
-            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size'],
-                        'kernel_size':2,'stride':2,'padding':0,'dilation':1,'groups':cell_info['cardinality'],'bias':cell_info['bias']}
+            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size']*cell_info['cardinality'],
+                        'kernel_size':2,'stride':2,'padding':0,'dilation':1,'groups':1,'bias':cell_info['bias']}
         elif(cell_info['mode']=='pass'):
-            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size'],
-                        'kernel_size':3,'stride':1,'padding':1,'dilation':1,'groups':cell_info['cardinality'],'bias':cell_info['bias']}
+            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size']*cell_info['cardinality'],
+                        'kernel_size':3,'stride':1,'padding':1,'dilation':1,'groups':1,'bias':cell_info['bias']}
         elif(cell_info['mode']=='fc'):
-            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size'],
-                        'kernel_size':1,'stride':1,'padding':0,'dilation':1,'groups':cell_info['cardinality'],'bias':cell_info['bias']}
+            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size']*cell_info['cardinality'],
+                        'kernel_size':1,'stride':1,'padding':0,'dilation':1,'groups':1,'bias':cell_info['bias']}
         elif(cell_info['mode']=='fc_down'):
-            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size'],
-                        'kernel_size':1,'stride':2,'padding':0,'dilation':1,'groups':cell_info['cardinality'],'bias':cell_info['bias']}
+            cell_in_info = {'cell':'oConv2d','input_size':cell_info['input_size'],'output_size':cell_info['output_size']*cell_info['cardinality'],
+                        'kernel_size':1,'stride':2,'padding':0,'dilation':1,'groups':1,'bias':cell_info['bias']}
         cell['in'] = Cell(cell_in_info)
         cell['activation'] = Cell({'cell':'Activation','mode':cell_info['activation']})
         cell['normalization'] = Cell({'cell':'Normalization','input_size':cell_info['input_size'],'mode':cell_info['normalization']}) if(cell_info['order']=='before') else \
         Cell({'cell':'Normalization','input_size':cell_info['output_size'],'mode':cell_info['normalization']})
-        self.permutation = self.make_permutation(cell_info['input_size'],cell_info['output_size'],cell_info['cardinality'],cell_info['sharing_rate'])
-        return cell      
+        self.coordinates = self.make_coordinates(cell_info['input_size'],cell_info['output_size'],cell_info['cardinality'],cell_info['sharing_rate'])
+        return cell
     
-    def make_permutation(self,input_size,output_size,groups,sharing_rate):
-        output_coordinates = torch.arange(output_size,device=device).view(-1,1).chunk(groups,dim=0)
+    def make_coordinates(self,input_size,output_size,cardinality,sharing_rate):
+        coordinates = []
+        output_coordinates = torch.arange(output_size*cardinality,device=device).view(-1,1).chunk(cardinality,dim=0)
         sharing_pivot = round(len(output_coordinates[0])*sharing_rate)
-        for i in range(groups):        
+        for i in range(cardinality):
             output_coordinates[i][:sharing_pivot] = output_coordinates[0][:sharing_pivot]
-        output_coordinates = torch.cat(output_coordinates,dim=0)
-        permutation = torch.zeros((output_size,output_size),device=device).scatter_(1,output_coordinates,1.0)
-        return permutation
+        output_coordinates = torch.stack(output_coordinates,dim=0)
+        input_coordinates = torch.arange(input_size,device=device).view(1,1,-1).expand(cardinality,1,-1)
+        coordinates = [output_coordinates,input_coordinates]
+        return coordinates
         
     def forward(self, input):
         x = input
+        coordinates = [self.coordinates[0][config.PARAM['cardinality']],self.coordinates[1][config.PARAM['cardinality']]]
         if(self.cell_info['order']=='before'):
-            x = self.cell['in'](self.cell['activation'](self.cell['normalization'](x)),self.permutation)
+            x = self.cell['in'](self.cell['activation'](self.cell['normalization'](x)),coordinates)
         elif(self.cell_info['order']=='after'):
-            x = self.cell['activation'](self.cell['normalization'](self.cell['in'](x,self.permutation)))
+            x = self.cell['activation'](self.cell['normalization'](self.cell['in'](x,coordinates)))
         else:
             raise ValueError('wrong order')
         return x
@@ -770,6 +773,37 @@ class CartesianResBasicCell(nn.Module):
             x = self.cell[i]['in'](x)
             x = self.cell[i]['out'](x)
             x = self.cell[i]['activation'](x+shortcut)
+        return x
+
+class CartesianDenseCell(nn.Module):
+    def __init__(self, cell_info):
+        super(CartesianDenseCell, self).__init__()
+        self.cell_info = cell_info
+        self.cell = self.make_cell()
+
+    def make_cell(self):
+        cell_info = copy.deepcopy(self.cell_info)
+        cell = nn.ModuleList([nn.ModuleDict({}) for _ in range(cell_info['num_layer'])])
+        for i in range(cell_info['num_layer']):
+            cell_in_info = {'input_size':cell_info['input_size'],'output_size':cell_info['cardinality']*cell_info['bottleneck']*cell_info['growth_rate'],'cell':'CartesianBasicCell','mode':'fc',
+            'normalization':cell_info['normalization'],'activation':cell_info['activation'],'cardinality':cell_info['cardinality'],'sharing_rate':cell_info['sharing_rate'],'order':'before'}
+            cell_out_info = {'input_size':cell_info['cardinality']*cell_info['bottleneck']*cell_info['growth_rate'],'output_size':cell_info['cardinality']*cell_info['growth_rate'],'cell':'CartesianBasicCell','mode':'pass',
+            'normalization':cell_info['normalization'],'activation':cell_info['activation'],'cardinality':cell_info['cardinality'],'sharing_rate':cell_info['sharing_rate'],'order':'before'}
+            cell[i]['in'] = Cell(cell_in_info)
+            cell[i]['out'] = Cell(cell_out_info)
+            cell_info['input_size'] = cell_info['input_size'] + cell_info['cardinality']*cell_info['growth_rate']
+        return cell
+        
+    def forward(self, input):
+        x = input
+        for i in range(len(self.cell)):
+            shortcut = list(x.chunk(self.cell_info['cardinality'],dim=1))
+            x = self.cell[i]['in'](x)
+            x = self.cell[i]['out'](x)
+            x = list(x.chunk(self.cell_info['cardinality'],dim=1))
+            for i in range(self.cell_info['cardinality']):
+                x[i] = torch.cat([shortcut[i],x[i]],dim=1)
+            x = torch.cat(x,dim=1)
         return x
         
 class Cell(nn.Module):
@@ -848,6 +882,8 @@ class Cell(nn.Module):
             cell = CartesianBasicCell(self.cell_info)
         elif(self.cell_info['cell'] == 'CartesianResBasicCell'):
             cell = CartesianResBasicCell(self.cell_info)
+        elif(self.cell_info['cell'] == 'CartesianDenseCell'):
+            cell = CartesianDenseCell(self.cell_info)
         else:
             raise ValueError('model mode not supported')
         return cell
