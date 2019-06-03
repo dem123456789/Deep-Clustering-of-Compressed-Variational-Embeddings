@@ -3,8 +3,8 @@ def init():
     global PARAM
     PARAM = {
         'data_name': {'train':'MNIST','test':'MNIST'},
-        'model_name': 'cvadebmm',
-        'special_TAG': '28',
+        'model_name': 'vadebmm',
+        'special_TAG': '28_20',
         'optimizer_name': 'Adam',
         'scheduler_name': 'CosineAnnealingLR',
         'lr': 1e-3,

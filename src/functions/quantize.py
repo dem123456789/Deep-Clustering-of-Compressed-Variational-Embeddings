@@ -7,25 +7,15 @@ class Quantize(Function):
         
     @staticmethod
     def forward(ctx, input, num_level, is_training):
+        x = input.clone()*(num_level-1)
         if is_training:
             prob = input.new(input.size()).uniform_()
-            x = input.clone()
-            if(num_level%2==0):
-                x[((x+1)/2>=prob)&(x<=1)&(x>=-1)] = 1
-                x[((x+1)/2<prob)&(x<=1)&(x>=-1)] = -1
-                x[((x-x.floor())>=prob)&((x>1)|(x<-1))] = x.ceil()[((x-x.floor())>=prob)&((x>1)|(x<-1))]
-                x[((x-x.floor())<prob)&((x>1)|(x<-1))] = x.floor()[((x-x.floor())<prob)&((x>1)|(x<-1))]
-            else:
-                x[(x-x.floor())>=prob] = x.ceil()[(x-x.floor())>=prob]
-                x[(x-x.floor())<prob] = x.floor()[(x-x.floor())<prob]
+            floor,ceil = x.floor(),x.ceil()
+            x[(x-floor)>=prob] = ceil[(x-floor)>=prob]
+            x[(x-floor)<prob] = floor[(x-floor)<prob]
         else:
-            if(num_level%2==0):
-                x = input.clone()
-                x[(x>=0)&(x<=1)] = 1
-                x[(x>=-1)&(x<0)] = -1
-                x[(x>1)|(x<-1)] = x[(x>1)|(x<-1)].round()
-            else:
-                x = input.round()
+            x = x.round()
+        x = x/(num_level-1)
         return x
 
     @staticmethod

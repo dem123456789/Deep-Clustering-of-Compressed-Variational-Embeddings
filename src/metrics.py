@@ -323,10 +323,10 @@ class Metric(object):
         if(config.PARAM['tuning_param']['classification'] > 0):
             topk=config.PARAM['topk']
             if(self.if_save):
-                self.score = torch.cat((self.score,output['classification'].cpu()),0) if self.score is not None else output['classification'].cpu()
+                self.score = torch.cat((self.score,output['classification']['pred'].cpu()),0) if self.score is not None else output['classification']['pred'].cpu()
                 self.label = torch.cat((self.label,input['label'].cpu()),0) if self.label is not None else input['label'].cpu()
             if('acc' in metric_names):
-                evaluation['acc'] = ACC(output['classification'],input['label'],topk=topk)
+                evaluation['acc'] = ACC(output['classification']['pred'],input['label'],topk=topk)
             if('cluster_acc' in metric_names):
                 evaluation['cluster_acc'] = Cluster_ACC(self.score,self.label,topk=topk) if(config.PARAM['activate_full']) else 0
             if('f1' in metric_names):

@@ -79,10 +79,6 @@ class Classifier(nn.Module):
             'var': nn.Parameter(torch.ones(config.PARAM['code_size'], config.PARAM['classes_size'])),
             'odds': nn.Parameter(torch.ones(config.PARAM['classes_size'])/config.PARAM['classes_size'])
             })
-
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                m.bias.data.zero_()
                 
     def make_classifier_info(self):
         classifier_info = config.PARAM['model']['classifier_info']
@@ -96,7 +92,7 @@ class Classifier(nn.Module):
 
     def classification_loss_fn(self, input, output):
         if(config.PARAM['tuning_param']['classification'] > 0):
-            q_c_z = output['classification']
+            q_c_z = output['classification']['pred']
             q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
             q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
             loss = torch.sum(q_c_z*0.5*torch.sum((q_mu-self.param['mu'])**2/self.param['var']+torch.exp(q_logvar)/self.param['var']-1+torch.log(self.param['var'])-q_logvar,dim=1),dim=1)           
@@ -174,7 +170,7 @@ class Model(nn.Module):
     def forward(self, input):
         output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
             'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
-            'classification': torch.tensor(0,device=device,dtype=torch.float32)}
+            'classification': {}}
 
         img = input['img'].view(input['img'].size(0),-1,1,1)
         encoded = self.encoder(img)
@@ -189,7 +185,7 @@ class Model(nn.Module):
         
         if(config.PARAM['tuning_param']['classification'] > 0):
             classification_output = self.classifier(output['compression']['code'])
-            output['classification'] = classification_output
+            output['classification']['pred'] = classification_output
 
         output['loss']  = config.PARAM['tuning_param']['compression']*self.decoder.compression_loss_fn(input,output) + config.PARAM['tuning_param']['classification']*self.classifier.classification_loss_fn(input,output)
         return output
