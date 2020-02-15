@@ -1,116 +1,100 @@
-import torch
 import config
+
 config.init()
-import time
+import argparse
+import datetime
+import torch
 import torch.backends.cudnn as cudnn
 import models
-import os
-import datetime
-import argparse
-import itertools
-from torch import nn
-from data import *
-from utils import *
-from metrics import *
+from data import fetch_dataset, make_data_loader
+from metrics import Metric
+from utils import save, to_device, process_control_name, process_dataset, resume, collate, save_img
+from logger import Logger
 
 cudnn.benchmark = True
 parser = argparse.ArgumentParser(description='Config')
 for k in config.PARAM:
-    exec('parser.add_argument(\'--{0}\',default=config.PARAM[\'{0}\'], help=\'\')'.format(k))
+    exec('parser.add_argument(\'--{0}\',default=config.PARAM[\'{0}\'], type=type(config.PARAM[\'{0}\']))'.format(k))
+parser.add_argument('--control_name', default=None, type=str)
 args = vars(parser.parse_args())
 for k in config.PARAM:
-    if(config.PARAM[k]!=args[k]):
-        exec('config.PARAM[\'{0}\'] = {1}'.format(k,args[k]))
-for k in config.PARAM:
-    exec('{0} = config.PARAM[\'{0}\']'.format(k))
-    
+    config.PARAM[k] = args[k]
+if args['control_name']:
+    config.PARAM['control_name'] = args['control_name']
+    control_list = list(config.PARAM['control'].keys())
+    control_name_list = args['control_name'].split('_')
+    for i in range(len(control_name_list)):
+        config.PARAM['control'][control_list[i]] = control_name_list[i]
+control_name_list = []
+for k in config.PARAM['control']:
+    control_name_list.append(config.PARAM['control'][k])
+config.PARAM['control_name'] = '_'.join(control_name_list)
+if config.PARAM['control']['mode'] == 'clustering':
+    config.PARAM['metric_names'] = {'train': ['Loss', 'NLL'], 'test': ['Loss', 'NLL']}
+else:
+    config.PARAM['metric_names'] = {'train': ['Loss', 'NLL', 'Accuracy'], 'test': ['Loss', 'NLL', 'Accuracy']}
+
 def main():
-    for code_size in config.PARAM['code_size_total']:
-        config.PARAM['code_size'] = code_size
-        seeds = list(range(init_seed,init_seed+num_Experiments))
-        for i in range(num_Experiments):
-            resume_model_TAG = '{}_{}_{}_{}'.format(code_size,seeds[i],model_data_name,model_name) if(resume_TAG=='') else '{}_{}_{}_{}_{}'.format(code_size,seeds[i],model_data_name,model_name,resume_TAG)
-            model_TAG = resume_model_TAG if(special_TAG=='') else '{}_{}'.format(resume_model_TAG,special_TAG)
-            print('Experiment: {}'.format(model_TAG))
-            result = runExperiment(model_TAG)
-            save(result,'./output/result/{}.pkl'.format(model_TAG))  
+    process_control_name()
+    seeds = list(range(config.PARAM['init_seed'], config.PARAM['init_seed'] + config.PARAM['num_Experiments']))
+    for i in range(config.PARAM['num_Experiments']):
+        model_tag_list = [str(seeds[i]), config.PARAM['data_name'], config.PARAM['subset'], config.PARAM['model_name'],
+                          config.PARAM['control_name']]
+        config.PARAM['model_tag'] = '_'.join(filter(None, model_tag_list))
+        print('Experiment: {}'.format(config.PARAM['model_tag']))
+        runExperiment()
     return
 
-def runExperiment(model_TAG):
-    model_TAG_list = model_TAG.split('_')
-    seed = int(model_TAG_list[1])
+
+def runExperiment():
+    seed = int(config.PARAM['model_tag'].split('_')[0])
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    randomGen = np.random.RandomState(seed)
-    
-    print(config.PARAM)
-    _,test_dataset = fetch_dataset(data_name=test_data_name)
-#    test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=batch_size*world_size, pin_memory=True, num_workers=num_workers*world_size, collate_fn = input_collate)
-    valid_data_size = len(test_dataset) if(data_size==0) else data_size
-    _,test_loader = split_dataset(_,test_dataset,valid_data_size,batch_size=batch_size,radomGen=np.random.RandomState(200),shuffle=True)
-    best = load('./output/model/{}_best.pkl'.format(model_TAG))
-    last_epoch = best['epoch']
-    print('Test from {}'.format(last_epoch))
-    model = eval('models.{}.{}(classes_size=test_dataset.classes_size).to(device)'.format(model_dir,model_name)) 
-    model.load_state_dict(best['model_dict'])
-    test_protocol = init_test_protocol(test_dataset)
-    result = test(test_loader,model,last_epoch,test_protocol)
-    print_result(model_TAG,last_epoch,result) 
-    return result
-            
-def test(validation_loader,model,epoch,protocol):
-    entropy_codec = models.classic.Entropy()
-    meter_panel = Meter_Panel(protocol['metric_names'])
-    with torch.no_grad():
-        model.train(False)
-        end = time.time()
-        for i, input in enumerate(validation_loader):
-            input = collate(input)
-            input = dict_to_device(input,device)
-            protocol = update_test_protocol(input,i,len(validation_loader),protocol)  
-            output = model(input,protocol)
-            output['loss'] = torch.mean(output['loss']) if(world_size > 1) else output['loss']
-            output['compression']['code'] = entropy_codec.encode(output['compression']['code'],protocol)
-            evaluation = meter_panel.eval(input,output,protocol)
-            batch_time = time.time() - end
-            meter_panel.update(evaluation,len(input['img']))
-            meter_panel.update({'batch_time':batch_time})
-            end = time.time()
-        print('vade_bmm_time',time.time()-end)
-
-    return meter_panel
-     
-def init_test_protocol(dataset):
-    protocol = {}
-    protocol['tuning_param'] = config.PARAM['tuning_param'].copy()
-    protocol['metric_names'] = config.PARAM['test_metric_names'].copy()
-    protocol['loss_mode'] = config.PARAM['loss_mode']
-    protocol['temperature'] = config.PARAM['temperature']                                                        
-    return protocol
-    
-def collate(input):
-    for k in input:
-        input[k] = torch.stack(input[k],0)
-    return input
-
-def update_test_protocol(input,i,num_batch,protocol):
-    if(i == num_batch-1):
-        protocol['activate_full'] = True
-    else:
-        protocol['activate_full'] = False
-    if(i % 100) == 1:
-        protocol['temperature'] = np.maximum(protocol['temperature']*np.exp(-config.PARAM['annealing_rate']*i),config.PARAM['min_temperature'])
-    if(input['img'].size(1)==1):
-        protocol['img_mode'] = 'L'
-    elif(input['img'].size(1)==3):
-        protocol['img_mode'] = 'RGB'
-    else:
-        raise ValueError('Wrong number of channel')
-    return protocol
-        
-def print_result(model_TAG,epoch,result):
-    print('Test Epoch({}): {}{}'.format(model_TAG,epoch,result.summary(['loss']+config.PARAM['test_metric_names'])))
+    dataset = fetch_dataset(config.PARAM['data_name'], config.PARAM['subset'])
+    process_dataset(dataset['train'])
+    data_loader = make_data_loader(dataset)
+    model = eval('models.{}().to(config.PARAM["device"])'.format(config.PARAM['model_name']))
+    load_tag = 'best'
+    last_epoch, model, _, _, _ = resume(model, config.PARAM['model_tag'], load_tag=load_tag)
+    current_time = datetime.datetime.now().strftime('%b%d_%H-%M-%S')
+    logger_path = 'output/runs/test_{}_{}'.format(config.PARAM['model_tag'], current_time) if config.PARAM[
+        'log_overwrite'] else 'output/runs/test_{}'.format(config.PARAM['model_tag'])
+    logger = Logger(logger_path)
+    logger.safe(True)
+    test(data_loader['test'], model, logger, last_epoch)
+    logger.safe(False)
+    save_result = {
+        'config': config.PARAM, 'epoch': last_epoch, 'logger': logger}
+    save(save_result, './output/result/{}.pt'.format(config.PARAM['model_tag']))
     return
-   
+
+
+def test(data_loader, model, logger, epoch):
+    with torch.no_grad():
+        label = []
+        metric = Metric()
+        model.train(False)
+        for i, input in enumerate(data_loader):
+            input = collate(input)
+            input_size = input['img'].numel()
+            input = to_device(input, config.PARAM['device'])
+            output = model(input)
+            if config.PARAM['control']['mode'] == 'clustering':
+                label.append(output['label'])
+            output['loss'] = output['loss'].mean() if config.PARAM['world_size'] > 1 else output['loss']
+            evaluation = metric.evaluate(config.PARAM['metric_names']['test'][:-1], input, output)
+            logger.append(evaluation, 'test', input_size)
+        if config.PARAM['control']['mode'] == 'clustering':
+            input = {'label':config.PARAM['label']}
+            output = {'label': torch.cat(label, dim=0)}
+            evaluation = metric.evaluate(['Clustering Accuracy'], input, output)
+            logger.append(evaluation, 'test', input['label'].size(0))
+        info = {'info': ['Model: {}'.format(config.PARAM['model_tag']),
+                         'Test Epoch: {}({:.0f}%)'.format(epoch, 100.)]}
+        logger.append(info, 'test', mean=False)
+        logger.write('test', config.PARAM['metric_names']['test'])
+    return
+
+
 if __name__ == "__main__":
-    main()    
+    main()

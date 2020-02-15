@@ -1,214 +1,161 @@
 import config
+import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
-import numpy as np
-from modules import Cell
-from utils import dict_to_device
+from utils import collate, to_device
+from .utils import make_model
 
-device = config.PARAM['device']
-   
-class Encoder(nn.Module):
+
+def reparameterize(mu, logvar):
+    std = torch.exp(0.5 * logvar)
+    eps = torch.randn_like(std)
+    return mu + eps * std
+
+
+def loss(input, output, param):
+    CE = F.binary_cross_entropy(output['img'], input['img'], reduction='sum')
+    q_c_z = output['label']
+    q_mu = output['mu'].view(input['img'].size(0), -1, 1)
+    q_logvar = output['logvar'].view(input['img'].size(0), -1, 1)
+    KLD = torch.sum(q_c_z * 0.5 * torch.sum(
+        (q_mu - param['mu']) ** 2 / torch.exp(param['logvar']) + torch.exp(q_logvar) / torch.exp(param['logvar']) - 1 +
+        param['logvar'] - q_logvar, dim=1), dim=1)
+    KLD = KLD + torch.sum(q_c_z * (torch.log(q_c_z) - F.log_softmax(param['logits'], dim=-1)),
+                          dim=1)
+    KLD = KLD.sum()
+    return CE + KLD
+
+
+def idx2onehot(idx):
+    if config.PARAM['subset'] == 'label' or config.PARAM['subset'] == 'identity':
+        idx = idx.view(idx.size(0), 1)
+        onehot = idx.new_zeros(idx.size(0), config.PARAM['classes_size']).float()
+        onehot.scatter_(1, idx, 1)
+    else:
+        onehot = idx.float()
+    return onehot
+
+
+class VADE(nn.Module):
     def __init__(self):
-        super(Encoder, self).__init__()
-        self.encoder_info = self.make_encoder_info()
-        self.encoder = self.make_encoder()
-        
-    def make_encoder_info(self):
-        encoder_info = config.PARAM['model']['encoder_info']
-        return encoder_info
-
-    def make_encoder(self):
-        encoder = nn.ModuleList([])
-        for i in range(len(self.encoder_info)):
-            encoder.append(Cell(self.encoder_info[i]))
-        return encoder
-        
-    def forward(self, input):
-        x = input
-        for i in range(len(self.encoder)):
-            x = self.encoder[i](x)
-        return x
-
-class Decoder(nn.Module):
-    def __init__(self):
-        super(Decoder, self).__init__()
-        self.decoder_info = self.make_decoder_info()
-        self.decoder = self.make_decoder()
-        
-    def make_decoder_info(self):
-        decoder_info = config.PARAM['model']['decoder_info']
-        return decoder_info
-
-    def make_decoder(self):
-        decoder = nn.ModuleList([])
-        for i in range(len(self.decoder_info)):
-            decoder.append(Cell(self.decoder_info[i]))
-        return decoder
-
-    def compression_loss_fn(self, input, output):
-        if(config.PARAM['loss_mode']['compression'] == 'bce'):
-            loss_fn = F.binary_cross_entropy
-        elif(config.PARAM['loss_mode']['compression'] == 'mse'):
-            loss_fn = F.mse_loss
-        elif(config.PARAM['loss_mode']['compression'] == 'mae'):
-            loss_fn = F.l1_loss
-        else:
-            raise ValueError('compression loss mode not supported') 
-        if(config.PARAM['tuning_param']['compression'] > 0):
-            loss = loss_fn(output['compression']['img'],input['img'],reduction='none').view(input['img'].size(0),-1).sum(dim=1)
-            loss = loss.mean()
-        else:
-            loss = torch.tensor(0,device=device,dtype=torch.float32)
-        return loss
-        
-    def forward(self, input):
-        x = input
-        for i in range(len(self.decoder)):
-            x = self.decoder[i](x)
-        return x
-        
-class Classifier(nn.Module):
-    def __init__(self):
-        super(Classifier, self).__init__()
-        self.classifier_info = self.make_classifier_info()
-        self.classifier = self.make_classifier()
+        super(VADE, self).__init__()
+        self.model = make_model(config.PARAM['model'])
         self.param = nn.ParameterDict({
-            'mu': nn.Parameter(torch.zeros(config.PARAM['code_size'], config.PARAM['classes_size'])),
-            'var': nn.Parameter(torch.ones(config.PARAM['code_size'], config.PARAM['classes_size'])),
-            'odds': nn.Parameter(torch.ones(config.PARAM['classes_size'])/config.PARAM['classes_size'])
-            })
-                
-    def make_classifier_info(self):
-        classifier_info = config.PARAM['model']['classifier_info']
-        return classifier_info
-        
-    def make_classifier(self):
-        classifier = nn.ModuleList([])
-        for i in range(len(self.classifier_info)):
-            classifier.append(Cell(self.classifier_info[i]))
-        return classifier
+            'mu': nn.Parameter(torch.zeros(config.PARAM['latent_size'], config.PARAM['classes_size'])),
+            'logvar': nn.Parameter(torch.ones(config.PARAM['latent_size'], config.PARAM['classes_size'])),
+            'logits': nn.Parameter(torch.ones(config.PARAM['classes_size']) / config.PARAM['classes_size'])
+        })
 
-    def classification_loss_fn(self, input, output):
-        if(config.PARAM['tuning_param']['classification'] > 0):
-            q_c_z = output['classification']['pred']
-            q_mu = output['compression']['param']['mu'].view(input['img'].size(0),-1,1)
-            q_logvar = output['compression']['param']['logvar'].view(input['img'].size(0),-1,1)
-            loss = torch.sum(q_c_z*0.5*torch.sum((q_mu-self.param['mu'])**2/self.param['var']+torch.exp(q_logvar)/self.param['var']-1+torch.log(self.param['var'])-q_logvar,dim=1),dim=1)           
-            loss = loss + torch.sum(q_c_z*(torch.log(q_c_z)-F.log_softmax(self.param['odds'],dim=-1)),dim=1)
-            loss = loss.mean()
-        else:
-            loss = torch.tensor(0,device=device,dtype=torch.float32)
-        return loss
-        
-    def forward(self, input):
-        z = input.view(input.size(0),-1,1)
-        q_c_z = torch.exp(F.log_softmax(self.param['odds'],dim=-1)-torch.sum(0.5*torch.log(2*math.pi*self.param['var'])+(z-self.param['mu'])**2/(2*self.param['var']),dim=1))+1e-10
-        x = q_c_z/torch.sum(q_c_z,dim=1,keepdim=True)
-        return x
-        
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()
-        self.encoder = Encoder()
-        self.classifier = Classifier()
-        self.encoder = Encoder()
-        self.decoder = Decoder()
-        self.encoder_mean = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
-        self.encoder_logvar = Cell({'input_size':2000,'output_size':config.PARAM['code_size'],'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':'none','activation':'none'})
+    def generate(self, N):
+        x = torch.randn([N, config.PARAM['latent_size']], device=config.PARAM['device'])
+        x = self.model['decoder_latent'](x)
+        x = self.model['decoder'](x)
+        generated = x.view(x.size(0), *config.PARAM['img_shape'])
+        return generated
 
     def init_param(self, train_loader):
         with torch.no_grad():
             self.train(False)
+            Z = []
             for i, input in enumerate(train_loader):
-                for k in input:
-                    input[k] = torch.stack(input[k],0)
-                input = dict_to_device(input,device)
+                input = collate(input)
+                input = to_device(input, config.PARAM['device'])
                 output = self(input)
-                z = output['compression']['code'].view(input['img'].size(0),-1)
-                Z = torch.cat((Z,z),0) if i > 0 else z
-            if(config.PARAM['init_param_mode']=='random'):
-                C = torch.rand(Z.size(0),config.PARAM['classes_size'],device=device)
-                nk = C.sum(dim=0,keepdim=True)+1e-10
-                self.classifier.param['mu'].copy_(Z.t().matmul(C)/nk)
-                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk-2*self.classifier.param['mu']*Z.t().matmul(C)/nk+self.classifier.param['mu']**2)
-            elif(config.PARAM['init_param_mode']=='kmeans'):
+                Z.append(output['z'])
+            Z = torch.cat(Z, dim=0)
+            if config.PARAM['init_param_mode'] == 'random':
+                C = torch.rand(Z.size(0), config.PARAM['classes_size'], device=config.PARAM['device'])
+                nk = C.sum(dim=0, keepdim=True) + 1e-10
+                mu = Z.t().matmul(C) / nk
+                logvar = torch.log((Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2)
+                self.classifier.param['mu'].copy_(mu)
+                self.classifier.param['logvar'].copy_(logvar)
+            elif config.PARAM['init_param_mode'] == 'kmeans':
                 from sklearn.cluster import KMeans
-                C = Z.new_zeros(Z.size(0),config.PARAM['classes_size'])
-                km = KMeans(n_clusters=config.PARAM['classes_size'],n_init=1,random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
-                C[torch.arange(C.size(0)),torch.tensor(km.labels_).long()] = 1
-                nk = C.sum(dim=0,keepdim=True)+1e-10
-                self.classifier.param['mu'].copy_(Z.t().matmul(C)/nk)
-                self.classifier.param['var'].copy_((Z**2).t().matmul(C)/nk-2*self.classifier.param['mu']*Z.t().matmul(C)/nk+self.classifier.param['mu']**2)
-            elif(config.PARAM['init_param_mode']=='gmm'):
+                C = Z.new_zeros(Z.size(0), config.PARAM['classes_size'])
+                km = KMeans(n_clusters=config.PARAM['classes_size'], n_init=1,
+                            random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
+                C[torch.arange(C.size(0)), torch.tensor(km.labels_).long()] = 1
+                nk = C.sum(dim=0, keepdim=True) + 1e-10
+                mu = Z.t().matmul(C) / nk
+                logvar = torch.log(
+                    (Z ** 2).t().matmul(C) / nk - 2 * self.classifier.param['mu'] * Z.t().matmul(C) / nk + mu ** 2)
+                self.param['mu'].copy_(mu)
+                self.param['logvar'].copy_(logvar)
+            elif config.PARAM['init_param_mode'] == 'gmm':
                 from sklearn.mixture import GaussianMixture
-                gm = GaussianMixture(n_components=config.PARAM['classes_size'],covariance_type='diag',random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
-                self.classifier.param['mu'].copy_(torch.tensor(gm.means_.T).float().to(device))
-                self.classifier.param['var'].copy_(torch.tensor(gm.covariances_.T).float().to(device))
-            elif(config.PARAM['init_param_mode']=='bmm'):
-                from bmm import BMM
-                Z = torch.max(Z.view(-1,config.PARAM['num_levels'],config.PARAM['code_size']),dim=1)[1]
-                bmm = BMM(n_comp=10,n_iter=300).fit(Z.cpu().numpy())
-                bmmq = torch.tensor(bmm.q).float().to(device)
-                bmmq[bmmq<=0.1] = 0.1
-                bmmq[bmmq>=0.9] = 0.9
-                self.classifier.param['codds'].copy_(torch.stack([1-bmmq,bmmq],dim=0))
+                gm = GaussianMixture(n_components=config.PARAM['classes_size'], covariance_type='diag',
+                                     random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
+                mu = torch.tensor(gm.means_.T, device=config.PARAM['device']).float()
+                logvar = torch.log(torch.tensor(gm.covariances_.T, device=config.PARAM['device']).float())
+                self.param['mu'].copy_(mu)
+                self.param['logvar'].copy_(logvar)
             else:
-                raise ValueError('Initialization method not supported')
+                raise ValueError('Not valid init param')
         return
-    
-    def reparameterize(self, mu, logvar):
-        if self.training:
-            std = logvar.mul(0.5).exp_()
-            eps = std.new(std.size()).normal_()
-            z = eps.mul(std).add_(mu)
-        else:
-            z = mu
-        return z
-        
+
     def forward(self, input):
-        output = {'loss':torch.tensor(0,device=device,dtype=torch.float32),
-            'compression':{'img':torch.tensor(0,device=device,dtype=torch.float32),'code':[],'param':None},
-            'classification': {}}
-
-        img = input['img'].view(input['img'].size(0),-1,1,1)
-        encoded = self.encoder(img)
-        mu = self.encoder_mean(encoded)
-        logvar = self.encoder_logvar(encoded)
-        output['compression']['code'] = self.reparameterize(mu,logvar)
-        output['compression']['param'] = {'mu':mu,'logvar':logvar}
-
-        if(config.PARAM['tuning_param']['compression'] > 0):
-            compression_output = self.decoder(output['compression']['code'])
-            output['compression']['img'] = compression_output.view(input['img'].size())
-        
-        if(config.PARAM['tuning_param']['classification'] > 0):
-            classification_output = self.classifier(output['compression']['code'])
-            output['classification']['pred'] = classification_output
-
-        output['loss']  = config.PARAM['tuning_param']['compression']*self.decoder.compression_loss_fn(input,output) + config.PARAM['tuning_param']['classification']*self.classifier.classification_loss_fn(input,output)
+        output = {'loss': torch.tensor(0, device=config.PARAM['device'], dtype=torch.float32)}
+        x = input['img']
+        x = x.view(x.size(0), -1)
+        x = self.model['encoder'](x)
+        output['mu'] = self.model['encoder_latent_mu'](x)
+        output['logvar'] = self.model['encoder_latent_logvar'](x)
+        if self.training:
+            output['z'] = reparameterize(output['mu'], output['logvar'])
+        else:
+            output['z'] = output['mu']
+        q_c_z = torch.exp(F.log_softmax(self.param['logits'], dim=-1) - torch.sum(
+            0.5 * torch.log(2 * math.pi * self.param['var']) + (output['z'].unsqueeze(-1) - self.param['mu']) ** 2 / (
+                    2 * self.param['var']), dim=1)) + 1e-10
+        output['label'] = q_c_z / torch.sum(q_c_z, dim=1, keepdim=True)
+        x = self.model['decoder_latent'](output['z'])
+        decoded = self.model['decoder'](x)
+        output['img'] = decoded.view(decoded.size(0), *config.PARAM['img_shape'])
+        output['loss'] = loss(input, output, self.param)
         return output
 
-def vade(model_TAG):
-    model_TAG_list = model_TAG.split('_')
-    init_dim = 1 if(model_TAG_list[1]=='MNIST') else 3  
-    config.PARAM['code_size'] = int(model_TAG_list[3])
+
+def vade():
+    normalization = 'none'
+    activation = 'relu'
+    img_shape = config.PARAM['img_shape']
+    latent_size = config.PARAM['latent_size']
+    hidden_size = config.PARAM['hidden_size']
+    num_layers = config.PARAM['num_layers']
     config.PARAM['model'] = {}
-    config.PARAM['model']['encoder_info'] = [
-        {'input_size':784,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},        
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
-        {'input_size':500,'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},       
-        ]
-    config.PARAM['model']['decoder_info'] = [
-        {'input_size':config.PARAM['code_size'],'output_size':2000,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']},
-        {'input_size':2000,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']}, 
-        {'input_size':500,'output_size':500,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':config.PARAM['activation']}, 
-        {'input_size':500,'output_size':784,'num_layer':1,'cell':'BasicCell','mode':'fc','normalization':config.PARAM['normalization'],'activation':'sigmoid'}, 
-        ]
-    config.PARAM['model']['classifier_info'] = [
-        {'cell':'none'},
-        ]
-    model = Model()
+    # Encoder
+    config.PARAM['model']['encoder'] = []
+    config.PARAM['model']['encoder'].append(
+        {'cell': 'LinearCell', 'input_size': np.prod(img_shape).item(), 'output_size': hidden_size,
+         'bias': True, 'normalization': normalization, 'activation': activation})
+    for i in range(num_layers - 2):
+        config.PARAM['model']['encoder'].append(
+            {'cell': 'LinearCell', 'input_size': hidden_size // (2 ** i), 'output_size': hidden_size // (2 ** (i + 1)),
+             'bias': True, 'normalization': normalization, 'activation': activation})
+    config.PARAM['model']['encoder'] = tuple(config.PARAM['model']['encoder'])
+    # latent
+    config.PARAM['model']['encoder_latent_mu'] = {
+        'cell': 'LinearCell', 'input_size': hidden_size // (2 ** (num_layers - 2)), 'output_size': latent_size,
+        'bias': True, 'normalization': 'none', 'activation': 'none'}
+    config.PARAM['model']['encoder_latent_logvar'] = {
+        'cell': 'LinearCell', 'input_size': hidden_size // (2 ** (num_layers - 2)), 'output_size': latent_size,
+        'bias': True, 'normalization': 'none', 'activation': 'none'}
+    config.PARAM['model']['decoder_latent'] = {
+        'cell': 'LinearCell', 'input_size': latent_size, 'output_size': hidden_size // (2 ** (num_layers - 2)),
+        'bias': True, 'normalization': normalization, 'activation': activation}
+    # Decoder
+    config.PARAM['model']['decoder'] = []
+    for i in range(num_layers - 2):
+        config.PARAM['model']['decoder'].append(
+            {'cell': 'LinearCell', 'input_size': hidden_size // (2 ** (num_layers - 2 - i)),
+             'output_size': hidden_size // (2 ** (num_layers - 2 - i - 1)),
+             'bias': True, 'normalization': normalization, 'activation': activation})
+    config.PARAM['model']['decoder'].append(
+        {'cell': 'LinearCell', 'input_size': hidden_size, 'output_size': np.prod(img_shape).item(),
+         'bias': True, 'normalization': 'none', 'activation': 'sigmoid'})
+    config.PARAM['model']['decoder'] = tuple(config.PARAM['model']['decoder'])
+    model = VADE()
     return model
-    
