@@ -1,18 +1,19 @@
-from .cifar import CIFAR10, CIFAR100
-from .coco import CocoDetection, CocoCaptions
-from .cub import CUB2011
-from .folder import ImageFolder, DatasetFolder
 from .mnist import MNIST, EMNIST, FashionMNIST
-from .mosi import MOSI
+from .celeba import CelebA
+from .cifar import CIFAR10, CIFAR100
+from .cub200 import CUB200
+from .omniglot import Omniglot
 from .svhn import SVHN
+from .imagenet import ImageNet
+from .folder import ImageFolder
+from .utils import *
 from .transforms import *
-from .voc import VOCDetection, VOCSegmentation
-from .wheatimage import WheatImage
 
 __all__ = ('MNIST','EMNIST', 'FashionMNIST',
-           'CIFAR10', 'CIFAR100', 'SVHN',
-           'ImageFolder', 'DatasetFolder',
-           'VOCDetection', 'VOCSegmentation',         
-           'CocoCaptions', 'CocoDetection',
-           'CUB2011',
-           'WheatImage','MOSI')
+           'CelebA',
+           'CIFAR10', 'CIFAR100',
+           'CUB200',
+           'Omniglot',
+            'SVHN',
+           'ImageNet',
+           'ImageFolder')

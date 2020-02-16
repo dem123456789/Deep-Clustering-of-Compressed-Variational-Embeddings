@@ -96,6 +96,9 @@ def recur(fn, input, *args):
 
 
 def process_control_name():
+    config.PARAM['mode'] = config.PARAM['control']['mode']
+    if 'init_param_mode' in config.PARAM['control']:
+        config.PARAM['init_param_mode'] = config.PARAM['control']['init_param_mode']
     if 'sharing_rate' in config.PARAM['control']:
         config.PARAM['sharing_rate'] = float(config.PARAM['control']['sharing_rate'])
     if config.PARAM['data_name'] in ['MNIST', 'FashionMNIST', 'EMNIST', 'Omniglot']:
@@ -165,7 +168,6 @@ class Stats(object):
 
 def process_dataset(dataset):
     config.PARAM['classes_size'] = dataset.classes_size
-    config.PARAM['label'] = dataset.label
     return
 
 

@@ -4,8 +4,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import collate, to_device
-from .utils import make_model
+from .utils import make_model, idx2onehot
 
 
 def reparameterize(mu, logvar):
@@ -25,17 +24,7 @@ def loss(input, output, param):
     KLD = KLD + torch.sum(q_c_z * (torch.log(q_c_z) - F.log_softmax(param['logits'], dim=-1)),
                           dim=1)
     KLD = KLD.sum()
-    return CE + KLD
-
-
-def idx2onehot(idx):
-    if config.PARAM['subset'] == 'label' or config.PARAM['subset'] == 'identity':
-        idx = idx.view(idx.size(0), 1)
-        onehot = idx.new_zeros(idx.size(0), config.PARAM['classes_size']).float()
-        onehot.scatter_(1, idx, 1)
-    else:
-        onehot = idx.float()
-    return onehot
+    return CE
 
 
 class VADE(nn.Module):
@@ -55,47 +44,6 @@ class VADE(nn.Module):
         generated = x.view(x.size(0), *config.PARAM['img_shape'])
         return generated
 
-    def init_param(self, train_loader):
-        with torch.no_grad():
-            self.train(False)
-            Z = []
-            for i, input in enumerate(train_loader):
-                input = collate(input)
-                input = to_device(input, config.PARAM['device'])
-                output = self(input)
-                Z.append(output['z'])
-            Z = torch.cat(Z, dim=0)
-            if config.PARAM['init_param_mode'] == 'random':
-                C = torch.rand(Z.size(0), config.PARAM['classes_size'], device=config.PARAM['device'])
-                nk = C.sum(dim=0, keepdim=True) + 1e-10
-                mu = Z.t().matmul(C) / nk
-                logvar = torch.log((Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2)
-                self.classifier.param['mu'].copy_(mu)
-                self.classifier.param['logvar'].copy_(logvar)
-            elif config.PARAM['init_param_mode'] == 'kmeans':
-                from sklearn.cluster import KMeans
-                C = Z.new_zeros(Z.size(0), config.PARAM['classes_size'])
-                km = KMeans(n_clusters=config.PARAM['classes_size'], n_init=1,
-                            random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
-                C[torch.arange(C.size(0)), torch.tensor(km.labels_).long()] = 1
-                nk = C.sum(dim=0, keepdim=True) + 1e-10
-                mu = Z.t().matmul(C) / nk
-                logvar = torch.log(
-                    (Z ** 2).t().matmul(C) / nk - 2 * self.classifier.param['mu'] * Z.t().matmul(C) / nk + mu ** 2)
-                self.param['mu'].copy_(mu)
-                self.param['logvar'].copy_(logvar)
-            elif config.PARAM['init_param_mode'] == 'gmm':
-                from sklearn.mixture import GaussianMixture
-                gm = GaussianMixture(n_components=config.PARAM['classes_size'], covariance_type='diag',
-                                     random_state=config.PARAM['randomGen']).fit(Z.cpu().numpy())
-                mu = torch.tensor(gm.means_.T, device=config.PARAM['device']).float()
-                logvar = torch.log(torch.tensor(gm.covariances_.T, device=config.PARAM['device']).float())
-                self.param['mu'].copy_(mu)
-                self.param['logvar'].copy_(logvar)
-            else:
-                raise ValueError('Not valid init param')
-        return
-
     def forward(self, input):
         output = {'loss': torch.tensor(0, device=config.PARAM['device'], dtype=torch.float32)}
         x = input['img']
@@ -108,8 +56,9 @@ class VADE(nn.Module):
         else:
             output['z'] = output['mu']
         q_c_z = torch.exp(F.log_softmax(self.param['logits'], dim=-1) - torch.sum(
-            0.5 * torch.log(2 * math.pi * self.param['var']) + (output['z'].unsqueeze(-1) - self.param['mu']) ** 2 / (
-                    2 * self.param['var']), dim=1)) + 1e-10
+            0.5 * (math.log(2 * math.pi) + self.param['logvar']) + (
+                        output['z'].unsqueeze(-1) - self.param['mu']) ** 2 / (2 * torch.exp(self.param['logvar'])),
+            dim=1)) + 1e-10
         output['label'] = q_c_z / torch.sum(q_c_z, dim=1, keepdim=True)
         x = self.model['decoder_latent'](output['z'])
         decoded = self.model['decoder'](x)

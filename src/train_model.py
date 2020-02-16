@@ -39,6 +39,7 @@ if config.PARAM['control']['mode'] == 'clustering':
 else:
     config.PARAM['metric_names'] = {'train': ['Loss', 'NLL', 'Accuracy'], 'test': ['Loss', 'NLL', 'Accuracy']}
 
+
 def main():
     process_control_name()
     seeds = list(range(config.PARAM['init_seed'], config.PARAM['init_seed'] + config.PARAM['num_Experiments']))
@@ -59,7 +60,7 @@ def runExperiment():
     process_dataset(dataset['train'])
     data_loader = make_data_loader(dataset)
     model = eval('models.{}().to(config.PARAM["device"])'.format(config.PARAM['model_name']))
-    model.init_param(data_loader['train'])
+    config.PARAM['C'] = models.init_param(data_loader['train'], model)
     optimizer = make_optimizer(model)
     scheduler = make_scheduler(optimizer)
     if config.PARAM['resume_mode'] == 1:
@@ -78,7 +79,8 @@ def runExperiment():
         logger = Logger(logger_path)
     if config.PARAM['world_size'] > 1:
         model = torch.nn.DataParallel(model, device_ids=list(range(config.PARAM['world_size'])))
-    config.PARAM['pivot_metric'] = 'test/InceptionScore'
+    config.PARAM['pivot_metric'] = 'test/Accuracy' if config.PARAM['mode'] == 'classification' else \
+        'test/Clustering Accuracy'
     config.PARAM['pivot'] = -1e10
     for epoch in range(last_epoch, config.PARAM['num_epochs'] + 1):
         logger.safe(True)
@@ -109,6 +111,7 @@ def train(data_loader, model, optimizer, logger, epoch):
     metric = Metric()
     model.train(True)
     for i, input in enumerate(data_loader):
+        # print(i)
         start_time = time.time()
         input = collate(input)
         input_size = input['img'].numel()
@@ -137,7 +140,8 @@ def train(data_loader, model, optimizer, logger, epoch):
 
 def test(data_loader, model, logger, epoch):
     with torch.no_grad():
-        label = []
+        output_label = []
+        target_label = []
         metric = Metric()
         model.train(False)
         for i, input in enumerate(data_loader):
@@ -146,13 +150,14 @@ def test(data_loader, model, logger, epoch):
             input = to_device(input, config.PARAM['device'])
             output = model(input)
             output['loss'] = output['loss'].mean() if config.PARAM['world_size'] > 1 else output['loss']
-            if config.PARAM['control']['mode'] == 'clustering':
-                label.append(output['label'])
-            evaluation = metric.evaluate(config.PARAM['metric_names']['test'][:-1], input, output)
+            if config.PARAM['mode'] == 'clustering':
+                output_label.append(output['label'])
+                target_label.append(input['label'])
+            evaluation = metric.evaluate(config.PARAM['metric_names']['test'], input, output)
             logger.append(evaluation, 'test', input_size)
-        if config.PARAM['control']['mode'] == 'clustering':
-            input = {'label':config.PARAM['label']}
-            output = {'label': torch.cat(label, dim=0)}
+        if config.PARAM['mode'] == 'clustering':
+            input = {'label': torch.cat(target_label, dim=0)}
+            output = {'label': torch.cat(output_label, dim=0)}
             evaluation = metric.evaluate(['Clustering Accuracy'], input, output)
             logger.append(evaluation, 'test', input['label'].size(0))
         info = {'info': ['Model: {}'.format(config.PARAM['model_tag']),
