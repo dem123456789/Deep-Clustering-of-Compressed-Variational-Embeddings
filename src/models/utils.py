@@ -73,22 +73,28 @@ def init_param(train_loader, model):
         if config.PARAM['mode'] == 'classification':
             nk = C.sum(dim=0, keepdim=True) + 1e-10
             mu = Z.t().matmul(C) / nk
-            logvar = torch.log((Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2)
+            var = (Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2
         else:
-            if config.PARAM['init_param_mode'] == 'random':
+            if config.PARAM['init_param_mode'] == 'none':
+                C = torch.distributions.categorical.Categorical(
+                    Z.new_ones(config.PARAM['classes_size']) / config.PARAM['classes_size'])
+                C = idx2onehot(C.sample((Z.size(0),)))
+                mu = model.param['mu'].data
+                var = model.param['var'].data
+            elif config.PARAM['init_param_mode'] == 'random':
                 C = torch.distributions.categorical.Categorical(
                     Z.new_ones(config.PARAM['classes_size']) / config.PARAM['classes_size'])
                 C = idx2onehot(C.sample((Z.size(0),)))
                 nk = C.sum(dim=0, keepdim=True) + 1e-10
                 mu = Z.t().matmul(C) / nk
-                logvar = torch.log((Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2)
+                var = (Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2
             elif config.PARAM['init_param_mode'] == 'kmeans':
                 from sklearn.cluster import KMeans
                 km = KMeans(n_clusters=config.PARAM['classes_size'], n_init=1).fit(Z.cpu().numpy())
                 C = idx2onehot(torch.tensor(km.labels_, dtype=torch.long))
                 nk = C.sum(dim=0, keepdim=True) + 1e-10
                 mu = Z.t().matmul(C) / nk
-                logvar = torch.log((Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2)
+                var = (Z ** 2).t().matmul(C) / nk - 2 * mu * Z.t().matmul(C) / nk + mu ** 2
             elif config.PARAM['init_param_mode'] == 'gmm':
                 from sklearn.mixture import GaussianMixture
                 gm = GaussianMixture(n_components=config.PARAM['classes_size'], covariance_type='diag').fit(
@@ -96,9 +102,9 @@ def init_param(train_loader, model):
                 C = idx2onehot(
                     torch.tensor(gm.predict(Z.cpu().numpy()), dtype=torch.long, device=config.PARAM['device']))
                 mu = torch.tensor(gm.means_.T, dtype=torch.float, device=config.PARAM['device'])
-                logvar = torch.log(torch.tensor(gm.covariances_.T, dtype=torch.float, device=config.PARAM['device']))
+                var = torch.tensor(gm.covariances_.T, dtype=torch.float, device=config.PARAM['device'])
             else:
                 raise ValueError('Not valid init param')
         model.param['mu'].copy_(mu)
-        model.param['logvar'].copy_(logvar)
+        model.param['var'].copy_(var)
         return C

@@ -107,7 +107,19 @@ def process_control_name():
         config.PARAM['img_shape'] = [3, 32, 32]
     else:
         raise ValueError('Not valid dataset')
-    if config.PARAM['data_name'] in ['MNIST', 'FashionMNIST', 'EMNIST', 'Omniglot']:
+    if config.PARAM['data_name'] in ['MNIST', 'FashionMNIST', 'EMNIST', 'Omniglot', 'CIFAR10']:
+        if config.PARAM['model_name'] in ['vade', 'mcvade']:
+            config.PARAM['latent_size'] = 50
+            config.PARAM['hidden_size'] = 500
+            config.PARAM['num_layers'] = 3
+        elif config.PARAM['model_name'] in ['dcvade', 'dcmcvade']:
+            config.PARAM['latent_size'] = 50
+            config.PARAM['hidden_size'] = 100
+            config.PARAM['depth'] = 2
+            config.PARAM['encode_shape'] = [config.PARAM['hidden_size'] * (2 ** (config.PARAM['depth'] - 1)),
+                                            config.PARAM['img_shape'][1] // (2 ** config.PARAM['depth']),
+                                            config.PARAM['img_shape'][2] // (2 ** config.PARAM['depth'])]
+    elif config.PARAM['data_name'] in ['SVHN', 'CIFAR10', 'CIFAR100']:
         if config.PARAM['model_name'] in ['vade', 'mcvade']:
             config.PARAM['latent_size'] = 50
             config.PARAM['hidden_size'] = 1000

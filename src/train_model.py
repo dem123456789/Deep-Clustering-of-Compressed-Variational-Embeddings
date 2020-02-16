@@ -108,10 +108,11 @@ def runExperiment():
 
 
 def train(data_loader, model, optimizer, logger, epoch):
+    adjust_learning_rate(optimizer, epoch)
+    clip = 0.1
     metric = Metric()
     model.train(True)
     for i, input in enumerate(data_loader):
-        # print(i)
         start_time = time.time()
         input = collate(input)
         input_size = input['img'].numel()
@@ -120,6 +121,7 @@ def train(data_loader, model, optimizer, logger, epoch):
         output = model(input)
         output['loss'] = output['loss'].mean() if config.PARAM['world_size'] > 1 else output['loss']
         output['loss'].backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
         optimizer.step()
         if i % int((len(data_loader) * config.PARAM['log_interval']) + 1) == 0:
             batch_time = time.time() - start_time
@@ -163,7 +165,7 @@ def test(data_loader, model, logger, epoch):
         info = {'info': ['Model: {}'.format(config.PARAM['model_tag']),
                          'Test Epoch: {}({:.0f}%)'.format(epoch, 100.)]}
         logger.append(info, 'test', mean=False)
-        logger.write('test', config.PARAM['metric_names']['test'])
+        logger.write('test', config.PARAM['metric_names']['test'] + ['Clustering Accuracy'])
     return
 
 
@@ -176,14 +178,14 @@ def make_optimizer(model):
                                   weight_decay=config.PARAM['weight_decay'])
     elif config.PARAM['optimizer_name'] == 'Adam':
         optimizer = optim.Adam(model.parameters(), lr=config.PARAM['lr'], weight_decay=config.PARAM['weight_decay'],
-                               betas=(0.5, 0.999))
+                               betas=(0.9, 0.999))
     else:
         raise ValueError('Not valid optimizer name')
     return optimizer
 
 
 def make_scheduler(optimizer):
-    if config.PARAM['scheduler_name'] == 'None':
+    if config.PARAM['scheduler_name'] in ['None', 'Custom']:
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[65535])
     elif config.PARAM['scheduler_name'] == 'StepLR':
         scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=config.PARAM['step_size'],
@@ -192,7 +194,7 @@ def make_scheduler(optimizer):
         scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=config.PARAM['milestones'],
                                                    gamma=config.PARAM['factor'])
     elif config.PARAM['scheduler_name'] == 'CosineAnnealingLR':
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.PARAM['num_epochs'])
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.PARAM['num_epochs'], eta_min=2e-4)
     elif config.PARAM['scheduler_name'] == 'ReduceLROnPlateau':
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=config.PARAM['factor'],
                                                          patience=config.PARAM['patience'], verbose=True,
@@ -204,6 +206,12 @@ def make_scheduler(optimizer):
         raise ValueError('Not valid scheduler name')
     return scheduler
 
+
+def adjust_learning_rate(optimizer, epoch):
+    lr = max(config.PARAM['lr'] * (0.9 ** (epoch // 10)), 2e-4)
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = lr
+    return lr
 
 if __name__ == "__main__":
     main()

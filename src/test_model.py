@@ -92,7 +92,7 @@ def test(data_loader, model, logger, epoch):
         info = {'info': ['Model: {}'.format(config.PARAM['model_tag']),
                          'Test Epoch: {}({:.0f}%)'.format(epoch, 100.)]}
         logger.append(info, 'test', mean=False)
-        logger.write('test', config.PARAM['metric_names']['test'])
+        logger.write('test', config.PARAM['metric_names']['test'] + ['Clustering Accuracy'])
     return
 
 
