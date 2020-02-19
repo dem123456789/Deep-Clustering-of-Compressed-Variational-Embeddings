@@ -187,7 +187,12 @@ class MultimodalController(nn.Module):
         self.register_buffer('embedding', embedding)
 
     def forward(self, input):
-        embedding = config.PARAM['attr'].matmul(self.embedding)
-        embedding = embedding.view(*embedding.size(), *([1] * (input.dim() - 2)))
+        if config.PARAM['attr'] is None:
+            embedding = self.embedding.unsqueeze(0)
+        else:
+            embedding = config.PARAM['attr'].matmul(self.embedding)
+            embedding = embedding.view(*embedding.size(), *([1] * (input.dim() - 2)))
         output = input * embedding
         return output
+
+

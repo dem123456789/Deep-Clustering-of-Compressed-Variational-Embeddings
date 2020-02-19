@@ -157,15 +157,17 @@ def test(data_loader, model, logger, epoch):
                 target_label.append(input['label'])
             evaluation = metric.evaluate(config.PARAM['metric_names']['test'], input, output)
             logger.append(evaluation, 'test', input_size)
+        test_metric = config.PARAM['metric_names']['test']
         if config.PARAM['mode'] == 'clustering':
             input = {'label': torch.cat(target_label, dim=0)}
             output = {'label': torch.cat(output_label, dim=0)}
             evaluation = metric.evaluate(['Clustering Accuracy'], input, output)
             logger.append(evaluation, 'test', input['label'].size(0))
+            test_metric = test_metric + ['Clustering Accuracy']
         info = {'info': ['Model: {}'.format(config.PARAM['model_tag']),
                          'Test Epoch: {}({:.0f}%)'.format(epoch, 100.)]}
         logger.append(info, 'test', mean=False)
-        logger.write('test', config.PARAM['metric_names']['test'] + ['Clustering Accuracy'])
+        logger.write('test', test_metric)
     return
 
 
@@ -178,7 +180,7 @@ def make_optimizer(model):
                                   weight_decay=config.PARAM['weight_decay'])
     elif config.PARAM['optimizer_name'] == 'Adam':
         optimizer = optim.Adam(model.parameters(), lr=config.PARAM['lr'], weight_decay=config.PARAM['weight_decay'],
-                               betas=(0.9, 0.999))
+                               betas=(0.5, 0.999))
     else:
         raise ValueError('Not valid optimizer name')
     return optimizer
