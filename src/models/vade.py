@@ -90,11 +90,15 @@ class MCVADE(nn.Module):
         return generated
 
     def forward(self, input):
-        config.PARAM['attr'] = None
         output = {'loss': torch.tensor(0, device=config.PARAM['device'], dtype=torch.float32)}
         x = input['img']
-        x = x.view(x.size(0), 1, -1)
-        x = x.expand(x.size(0), config.PARAM['classes_size'], x.size(-1))
+        if self.training:
+            config.PARAM['attr'] = idx2onehot(input['label'])
+            x = x.view(x.size(0), -1)
+        else:
+            config.PARAM['attr'] = None
+            x = x.view(x.size(0), 1, -1)
+            x = x.expand(x.size(0), config.PARAM['classes_size'], x.size(-1))
         x = self.model['encoder'](x)
         x = self.model['encoder_latent_mc'](x)
         mu = self.model['encoder_latent_mu'](x)
@@ -103,17 +107,28 @@ class MCVADE(nn.Module):
             z = reparameterize(mu, logvar)
         else:
             z = mu
-        q_c_z = torch.exp(F.log_softmax(self.param['logits'], dim=-1) - torch.sum(
-            0.5 * torch.log(2 * math.pi * self.param['var']) + (z.unsqueeze(2) - self.param['mu']) ** 2 / (
-                    2 * self.param['var']), dim=-1)) + 1e-10
-        q_c_z = q_c_z / torch.sum(q_c_z, dim=-1, keepdim=True)
-        label = torch.diagonal(q_c_z, dim1=1, dim2=2)
-        label = label.topk(1, 1, True, True)[1].squeeze()
-        output['label'] = q_c_z[torch.arange(mu.size(0)), label]
-        output['mu'] = mu[torch.arange(mu.size(0)), label]
-        output['logvar'] = logvar[torch.arange(z.size(0)), label]
-        output['z'] = z[torch.arange(z.size(0)), label]
-        config.PARAM['attr'] = idx2onehot(label)
+        if self.training:
+            q_c_z = torch.exp(F.log_softmax(self.param['logits'], dim=-1) - torch.sum(
+                0.5 * torch.log(2 * math.pi * self.param['var']) + (z.unsqueeze(1) - self.param['mu']) ** 2 / (
+                        2 * self.param['var']), dim=-1)) + 1e-10
+            output['label'] = q_c_z / torch.sum(q_c_z, dim=-1, keepdim=True)
+        else:
+            q_c_z = torch.exp(F.log_softmax(self.param['logits'], dim=-1) - torch.sum(
+                0.5 * torch.log(2 * math.pi * self.param['var']) + (z.unsqueeze(2) - self.param['mu']) ** 2 / (
+                        2 * self.param['var']), dim=-1)) + 1e-10
+            q_c_z = q_c_z / torch.sum(q_c_z, dim=-1, keepdim=True)
+            output['label'] = torch.diagonal(q_c_z, dim1=1, dim2=2)
+        if self.training:
+            config.PARAM['attr'] = idx2onehot(input['label'])
+            output['mu'] = mu
+            output['logvar'] = logvar
+            output['z'] = z
+        else:
+            label = output['label'].topk(1, 1, True, True)[1].squeeze()
+            config.PARAM['attr'] = idx2onehot(label)
+            output['mu'] = mu[torch.arange(z.size(0)), label]
+            output['logvar'] = logvar[torch.arange(z.size(0)), label]
+            output['z'] = z[torch.arange(z.size(0)), label]
         x = self.model['decoder_latent_mc'](output['z'])
         x = self.model['decoder_latent'](x)
         decoded = self.model['decoder'](x)

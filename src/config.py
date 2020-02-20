@@ -4,7 +4,7 @@ def init():
         'data_name': 'MNIST',
         'subset': 'label',
         'model_name': 'mcvade',
-        'control': {'mode': 'clustering', 'init_param_mode': 'gmm', 'sharing_rate': '0.5'},
+        'control': {'mode': 'classification', 'init_param_mode': 'gmm', 'sharing_rate': '0.5'},
         'optimizer_name': 'Adam',
         'lr': 1e-3,
         'momentum': 0,
