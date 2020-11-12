@@ -4,7 +4,7 @@ This is an implementation of [Deep Clustering of Compressed Variational Embeddin
  - Clustering Accuracy
 ![ds-lstm](/asset/cluster_acc.png)
  - PSNR
- ![diagram]/asset/psnr.png)
+ ![diagram](/asset/psnr.png)
  
 ## Requirements
  - Python 3
