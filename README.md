@@ -1,9 +1,10 @@
 # Deep Clustering of Compressed Variational Embeddings
 
 This is an implementation of [Deep Clustering of Compressed Variational Embeddings](https://arxiv.org/abs/1910.10341) (VAB)
- - Clustering Accuracy
+
+ - Clustering Accuracy  
 ![ds-lstm](/asset/cluster_acc.png)
- - PSNR
+ - PSNR  
  ![diagram](/asset/psnr.png)
  
 ## Requirements
