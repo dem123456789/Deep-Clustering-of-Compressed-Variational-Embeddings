@@ -1,213 +1,94 @@
-import collections.abc as container_abcs
-import config
-import errno
-import numpy as np
-import os
 import torch
-from itertools import repeat
-from torchvision.utils import save_image
+import torch.nn as nn
+import numpy as np
+import time 
 
+from numpy.core.umath_tests import inner1d
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
+from bmm_implement import BMM
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.manifold import TSNE
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 
-def check_exists(path):
-    return os.path.exists(path)
+def PSNR(output,target,max=1.0):
+	MAX = torch.tensor(max).to(target.device)
+	criterion = nn.MSELoss().to(target.device)
+	MSE = criterion(output,target)
+	psnr = 20*torch.log10(MAX)-10*torch.log10(MSE)
+	return psnr
 
+def adjust_learning_rate(init_lr, optimizer, epoch):
+	lr = max(init_lr * (0.9 ** (epoch//10)), 0.0002)
+	for param_group in optimizer.param_groups:
+		param_group["lr"] = lr
+	return lr
 
-def makedir_exist_ok(path):
-    try:
-        os.makedirs(path)
-    except OSError as e:
-        if e.errno == errno.EEXIST:
-            pass
-        else:
-            raise
-    return
+def cluster_sample(z,total_labels,z_type=False):
+	total_labels = total_labels.astype(np.int)
 
+	#km_pred = KMeans(n_clusters=10).fit_predict(z)
 
-def save(input, path, protocol=2, mode='torch'):
-    dirname = os.path.dirname(path)
-    makedir_exist_ok(dirname)
-    if mode == 'torch':
-        torch.save(input, path, pickle_protocol=protocol)
-    elif mode == 'numpy':
-        np.save(path, input)
-    else:
-        raise ValueError('Not valid save mode')
-    return
+	if z_type:
+		bmm = BMM(n_comp=10,n_iter=300).fit(z)
+		bmm_means = bmm.qh
+		mm_pred = bmm.predict(z)
+	else:
+		gmm =  GaussianMixture(n_components=10,covariance_type='diag').fit(z)
+		mm_pred = gmm.predict(z)
+	
+	return mm_pred
 
+def rf_Iteration(z, pred_label, RF_n_iter):
+	pred_label = pred_label.astype(np.int)
+	pred_score = []
 
-def load(path, mode='torch'):
-    if mode == 'torch':
-        return torch.load(path, map_location=lambda storage, loc: storage)
-    elif mode == 'numpy':
-        return np.load(path)
-    else:
-        raise ValueError('Not valid save mode')
-    return
+	for i in range(RF_n_iter):
+		rf_pred = RandomForestClassifier(n_estimators=100, random_state=0, max_features=None, oob_score=True)
+		z_train, z_test, label_train, label_test = train_test_split(z, pred_label, test_size=0.67)
+		rf_pred.fit(z_train, label_train)
 
+		pred_score.append(rf_pred.oob_score_)
+		print('Iteration:{} \t oob:[{}]\t acc:[{}]'.format(
+		  i, rf_pred.oob_score_, rf_pred.score(z_test, label_test)))
+		
+		updated_pred = rf_pred.predict(z)
 
-def save_img(img, path, nrow=10, padding=0, pad_value=0):
-    makedir_exist_ok(os.path.dirname(path))
-    save_image(img, path, nrow=nrow, padding=padding, pad_value=pad_value)
-    return
+	return pred_score, updated_pred
 
+def visualization(z, pred_labels, total_labels, SNE_n_iter, epoch, em):
 
-def to_device(input, device):
-    output = recur(lambda x, y: x.to(y), input, device)
-    return output
+	time_start = time.time()
+	tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=SNE_n_iter)
+	tsne_results = tsne.fit_transform(z)
+	print ('t-SNE done! Time elapsed: {} seconds'.format(time.time()-time_start))
 
+	plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=total_labels[1:1000])
+	plt.xlabel('latent variable z_1')
+	plt.xlabel('latent variable z_2')
+	plt.savefig('./z_plot'+str(em)+str(epoch)+'.png')
+	plt.clf()
 
-def ntuple(n):
-    def parse(x):
-        if isinstance(x, container_abcs.Iterable) and not isinstance(x, str):
-            return x
-        return tuple(repeat(x, n))
+	plt.scatter(tsne_results[1:1000,0],tsne_results[1:1000,1],c=pred_labels[1:1000])
+	plt.xlabel('latent variable z_1')
+	plt.xlabel('latent variable z_2')
+	plt.savefig('./z_classifier_plot'+str(em)+str(epoch)+'.png')
+	plt.clf()
 
-    return parse
+def cluster_acc(labels_pred,labels):
+	labels = labels.astype(np.int)
+	labels_pred = labels_pred.astype(np.int)
+	
+	from sklearn.utils.linear_assignment_ import linear_assignment
+	assert labels.size == labels_pred.size
+	D = max(labels_pred.max(), labels.max())+1
+	w = np.zeros((D,D), dtype=np.int64)
 
+	for i in range(labels_pred.size):
+		w[labels_pred[i], labels[i]] += 1
+	ind = linear_assignment(w.max() - w)
+  
+	return sum([w[i,j] for i,j in ind])*1.0/labels_pred.size
 
-def apply_fn(module, fn):
-    for n, m in module.named_children():
-        if hasattr(m, fn):
-            exec('m.{0}()'.format(fn))
-        if sum(1 for _ in m.named_children()) != 0:
-            exec('apply_fn(m,\'{0}\')'.format(fn))
-    return
-
-
-def recur(fn, input, *args):
-    if isinstance(input, torch.Tensor) or isinstance(input, np.ndarray):
-        output = fn(input, *args)
-    elif isinstance(input, list):
-        output = []
-        for i in range(len(input)):
-            output.append(recur(fn, input[i], *args))
-    elif isinstance(input, tuple):
-        output = []
-        for i in range(len(input)):
-            output.append(recur(fn, input[i], *args))
-        output = tuple(output)
-    elif isinstance(input, dict):
-        output = {}
-        for key in input:
-            output[key] = recur(fn, input[key], *args)
-    else:
-        raise ValueError('Not valid input type')
-    return output
-
-
-def process_control_name():
-    config.PARAM['mode'] = config.PARAM['control']['mode']
-    if 'init_param_mode' in config.PARAM['control']:
-        config.PARAM['init_param_mode'] = config.PARAM['control']['init_param_mode']
-    if 'sharing_rate' in config.PARAM['control']:
-        config.PARAM['sharing_rate'] = float(config.PARAM['control']['sharing_rate'])
-    if config.PARAM['data_name'] in ['MNIST', 'FashionMNIST', 'EMNIST', 'Omniglot']:
-        config.PARAM['img_shape'] = [1, 28, 28]
-    elif config.PARAM['data_name'] in ['SVHN', 'CIFAR10', 'CIFAR100']:
-        config.PARAM['img_shape'] = [3, 32, 32]
-    else:
-        raise ValueError('Not valid dataset')
-    if config.PARAM['data_name'] in ['MNIST', 'FashionMNIST', 'EMNIST', 'Omniglot', 'CIFAR10']:
-        if config.PARAM['model_name'] in ['vade', 'mcvade']:
-            config.PARAM['latent_size'] = 50
-            config.PARAM['hidden_size'] = 500
-            config.PARAM['num_layers'] = 3
-        elif config.PARAM['model_name'] in ['dcvade', 'dcmcvade']:
-            config.PARAM['latent_size'] = 50
-            config.PARAM['hidden_size'] = 100
-            config.PARAM['depth'] = 2
-            config.PARAM['encode_shape'] = [config.PARAM['hidden_size'] * (2 ** (config.PARAM['depth'] - 1)),
-                                            config.PARAM['img_shape'][1] // (2 ** config.PARAM['depth']),
-                                            config.PARAM['img_shape'][2] // (2 ** config.PARAM['depth'])]
-    elif config.PARAM['data_name'] in ['SVHN', 'CIFAR10', 'CIFAR100']:
-        if config.PARAM['model_name'] in ['vade', 'mcvade']:
-            config.PARAM['latent_size'] = 50
-            config.PARAM['hidden_size'] = 1000
-            config.PARAM['num_layers'] = 4
-        elif config.PARAM['model_name'] in ['dcvade', 'dcmcvade']:
-            config.PARAM['latent_size'] = 50
-            config.PARAM['hidden_size'] = 100
-            config.PARAM['depth'] = 2
-            config.PARAM['encode_shape'] = [config.PARAM['hidden_size'] * (2 ** (config.PARAM['depth'] - 1)),
-                                            config.PARAM['img_shape'][1] // (2 ** config.PARAM['depth']),
-                                            config.PARAM['img_shape'][2] // (2 ** config.PARAM['depth'])]
-    else:
-        raise ValueError('Not valid dataset')
-    return
-
-
-def make_stats(dataset):
-    if os.path.exists('./data/stats/{}.pt'.format(dataset.data_name)):
-        stats = load('./data/stats/{}.pt'.format(dataset.data_name))
-    elif dataset is not None:
-        data_loader = torch.utils.data.DataLoader(dataset, batch_size=100, shuffle=False, num_workers=0)
-        stats = Stats(dim=1)
-        with torch.no_grad():
-            for input in data_loader:
-                stats.update(input['img'])
-        save(stats, './data/stats/{}.pt'.format(dataset.data_name))
-    return stats
-
-
-class Stats(object):
-    def __init__(self, dim):
-        self.dim = dim
-        self.n_samples = 0
-        self.n_features = None
-        self.mean = None
-        self.std = None
-
-    def update(self, data):
-        data = data.transpose(self.dim, -1).reshape(-1, data.size(self.dim))
-        if self.n_samples == 0:
-            self.n_samples = data.size(0)
-            self.n_features = data.size(1)
-            self.mean = data.mean(dim=0)
-            self.std = data.std(dim=0)
-        else:
-            m = float(self.n_samples)
-            n = data.size(0)
-            new_mean = data.mean(dim=0)
-            new_std = 0 if n == 1 else data.std(dim=0)
-            old_mean = self.mean
-            old_std = self.std
-            self.mean = m / (m + n) * old_mean + n / (m + n) * new_mean
-            self.std = torch.sqrt(m / (m + n) * old_std ** 2 + n / (m + n) * new_std ** 2 + m * n / (m + n) ** 2 * (
-                    old_mean - new_mean) ** 2)
-            self.n_samples += n
-        return
-
-
-def process_dataset(dataset):
-    config.PARAM['classes_size'] = dataset.classes_size
-    return
-
-
-def resume(model, model_tag, optimizer=None, scheduler=None, load_tag='checkpoint', verbose=True):
-    if os.path.exists('./output/model/{}_{}.pt'.format(model_tag, load_tag)):
-        checkpoint = load('./output/model/{}_{}.pt'.format(model_tag, load_tag))
-        last_epoch = checkpoint['epoch']
-        model.load_state_dict(checkpoint['model_dict'])
-        if optimizer is not None:
-            optimizer.load_state_dict(checkpoint['optimizer_dict'])
-        if scheduler is not None:
-            scheduler.load_state_dict(checkpoint['scheduler_dict'])
-        logger = checkpoint['logger']
-        if verbose:
-            print('Resume from {}'.format(last_epoch))
-    else:
-        print('Not exists model tag: {}, start from scratch'.format(model_tag))
-        import datetime
-        from logger import Logger
-        last_epoch = 1
-        current_time = datetime.datetime.now().strftime('%b%d_%H-%M-%S')
-        logger_path = 'output/runs/train_{}_{}'.format(config.PARAM['model_tag'], current_time) if config.PARAM[
-            'log_overwrite'] else 'output/runs/train_{}'.format(config.PARAM['model_tag'])
-        logger = Logger(logger_path)
-    return last_epoch, model, optimizer, scheduler, logger
-
-
-def collate(input):
-    for k in input:
-        input[k] = torch.stack(input[k], 0)
-    return input
