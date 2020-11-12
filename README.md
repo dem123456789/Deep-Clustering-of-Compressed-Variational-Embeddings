@@ -20,7 +20,7 @@ This is an implementation of [Deep Clustering of Compressed Variational Embeddin
 | VaDE | 95.30 |
 | VAB | 71.69 |
 ## Acknowledgement
-*Suya Wu
-Enmao Diao
-Jie Ding
+*Suya Wu  
+Enmao Diao  
+Jie Ding  
 Vahid Tarokh*
